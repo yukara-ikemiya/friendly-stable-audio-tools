@@ -1,16 +1,17 @@
 
 import os
+import typing as tp
+
 import torch
 import torchaudio
 import wandb
-from einops import rearrange
-from safetensors.torch import save_file, save_model
-from torch import nn, optim
-from torch.nn import functional as F
-from torch.nn.parameter import Parameter
+from safetensors.torch import save_model
 from ema_pytorch import EMA
 import auraloss
 import pytorch_lightning as pl
+from pytorch_lightning.utilities.rank_zero import rank_zero_only
+from aeiou.viz import pca_point_cloud, audio_spectrogram_image, tokens_spectrogram_image
+
 from ..models.autoencoders import AudioAutoencoder
 from ..models.discriminators import EncodecDiscriminator, OobleckDiscriminator, DACGANLoss
 from ..models.bottleneck import VAEBottleneck, RVQBottleneck, DACRVQBottleneck, DACRVQVAEBottleneck, RVQVAEBottleneck, WassersteinBottleneck
@@ -18,25 +19,21 @@ from .losses import MultiLoss, AuralossLoss, ValueLoss, L1Loss
 from .utils import create_optimizer_from_config, create_scheduler_from_config
 
 
-from pytorch_lightning.utilities.rank_zero import rank_zero_only
-from aeiou.viz import pca_point_cloud, audio_spectrogram_image, tokens_spectrogram_image
-
-
 class AutoencoderTrainingWrapper(pl.LightningModule):
     def __init__(
-            self,
-            autoencoder: AudioAutoencoder,
-            lr: float = 1e-4,
-            warmup_steps: int = 0,
-            encoder_freeze_on_warmup: bool = False,
-            sample_rate=48000,
-            loss_config: dict = None,
-            optimizer_configs: dict = None,
-            use_ema: bool = True,
-            ema_copy=None,
-            force_input_mono=False,
-            latent_mask_ratio=0.0,
-            teacher_model: AudioAutoencoder = None
+        self,
+        autoencoder: AudioAutoencoder,
+        loss_config: dict,
+        optimizer_configs: dict,
+        lr: float = 1e-4,
+        warmup_steps: int = 0,
+        encoder_freeze_on_warmup: bool = False,
+        sample_rate: int = 48000,
+        use_ema: bool = True,
+        ema_copy=None,
+        force_input_mono: bool = False,
+        latent_mask_ratio: float = 0.0,
+        teacher_model: tp.Optional[AudioAutoencoder] = None
     ):
         super().__init__()
 
@@ -48,80 +45,11 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         self.warmup_steps = warmup_steps
         self.encoder_freeze_on_warmup = encoder_freeze_on_warmup
         self.lr = lr
-
         self.force_input_mono = force_input_mono
 
         self.teacher_model = teacher_model
 
-        if optimizer_configs is None:
-            optimizer_configs = {
-                "autoencoder": {
-                    "optimizer": {
-                        "type": "AdamW",
-                        "config": {
-                            "lr": lr,
-                            "betas": (.8, .99)
-                        }
-                    }
-                },
-                "discriminator": {
-                    "optimizer": {
-                        "type": "AdamW",
-                        "config": {
-                            "lr": lr,
-                            "betas": (.8, .99)
-                        }
-                    }
-                }
-
-            }
-
         self.optimizer_configs = optimizer_configs
-
-        if loss_config is None:
-            scales = [2048, 1024, 512, 256, 128, 64, 32]
-            hop_sizes = []
-            win_lengths = []
-            overlap = 0.75
-            for s in scales:
-                hop_sizes.append(int(s * (1 - overlap)))
-                win_lengths.append(s)
-
-            loss_config = {
-                "discriminator": {
-                    "type": "encodec",
-                    "config": {
-                        "n_ffts": scales,
-                        "hop_lengths": hop_sizes,
-                        "win_lengths": win_lengths,
-                        "filters": 32
-                    },
-                    "weights": {
-                        "adversarial": 0.1,
-                        "feature_matching": 5.0,
-                    }
-                },
-                "spectral": {
-                    "type": "mrstft",
-                    "config": {
-                        "fft_sizes": scales,
-                        "hop_sizes": hop_sizes,
-                        "win_lengths": win_lengths,
-                        "perceptual_weighting": True
-                    },
-                    "weights": {
-                        "mrstft": 1.0,
-                    }
-                },
-                "time": {
-                    "type": "l1",
-                    "config": {},
-                    "weights": {
-                        "l1": 0.0,
-                    }
-                }
-            }
-
         self.loss_config = loss_config
 
         # Spectral reconstruction loss
@@ -154,7 +82,6 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
         if self.teacher_model is not None:
             # Distillation losses
-
             stft_loss_weight = self.loss_config['spectral']['weights']['mrstft'] * 0.25
             self.gen_loss_modules += [
                 AuralossLoss(self.sdstft, 'reals', 'decoded', name='mrstft_loss', weight=stft_loss_weight),  # Reconstruction loss
@@ -167,14 +94,12 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             ]
 
         else:
-
             # Reconstruction loss
             self.gen_loss_modules += [
                 AuralossLoss(self.sdstft, 'reals', 'decoded', name='mrstft_loss', weight=self.loss_config['spectral']['weights']['mrstft']),
             ]
 
             if self.autoencoder.out_channels == 2:
-
                 # Add left and right channel reconstruction losses in addition to the sum and difference
                 self.gen_loss_modules += [
                     AuralossLoss(self.lrstft, 'reals_left', 'decoded_left', name='stft_loss_left',
@@ -241,13 +166,11 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         if self.global_step >= self.warmup_steps:
             self.warmed_up = True
 
-        loss_info = {}
-
-        loss_info["reals"] = reals
+        loss_info = {"reals": reals}
 
         encoder_input = reals
 
-        if self.force_input_mono and encoder_input.shape[1] > 1:
+        if self.force_input_mono:
             encoder_input = encoder_input.mean(dim=1, keepdim=True)
 
         loss_info["encoder_input"] = encoder_input
@@ -308,7 +231,6 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         loss_info["feature_matching_distance"] = feature_matching_distance
 
         opt_gen, opt_disc = self.optimizers()
-
         lr_schedulers = self.lr_schedulers()
 
         sched_gen = None
@@ -434,8 +356,8 @@ class AutoencoderDemoCallback(pl.Callback):
                 recon_audio = fakes[idx].to(torch.float32).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
 
                 # add audio row
-                table_recon.add_row(
-                    f'audio_{idx}',
+                table_recon.add_data(
+                    f'sample_{idx}',
                     wandb.Audio(target_audio.numpy().T, sample_rate=self.sample_rate),
                     wandb.Image(audio_spectrogram_image(target_audio)),
                     wandb.Audio(recon_audio.numpy().T, sample_rate=self.sample_rate),
@@ -464,10 +386,7 @@ def create_loss_modules_from_bottleneck(bottleneck, loss_config):
     losses = []
 
     if isinstance(bottleneck, VAEBottleneck) or isinstance(bottleneck, DACRVQVAEBottleneck) or isinstance(bottleneck, RVQVAEBottleneck):
-        try:
-            kl_weight = loss_config['bottleneck']['weights']['kl']
-        except:
-            kl_weight = 1e-6
+        kl_weight = loss_config['bottleneck']['weights']['kl']
 
         kl_loss = ValueLoss(key='kl', weight=kl_weight, name='kl_loss')
         losses.append(kl_loss)
@@ -483,10 +402,7 @@ def create_loss_modules_from_bottleneck(bottleneck, loss_config):
         losses.append(commitment_loss)
 
     if isinstance(bottleneck, WassersteinBottleneck):
-        try:
-            mmd_weight = loss_config['bottleneck']['weights']['mmd']
-        except:
-            mmd_weight = 100
+        mmd_weight = loss_config['bottleneck']['weights']['mmd']
 
         mmd_loss = ValueLoss(key='mmd', weight=mmd_weight, name='mmd_loss')
         losses.append(mmd_loss)

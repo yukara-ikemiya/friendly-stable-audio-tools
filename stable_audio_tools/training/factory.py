@@ -46,8 +46,8 @@ def create_training_wrapper_from_config(model_config, model):
             warmup_steps=training_config.get("warmup_steps", 0),
             encoder_freeze_on_warmup=training_config.get("encoder_freeze_on_warmup", False),
             sample_rate=model_config["sample_rate"],
-            loss_config=training_config.get("loss_configs", None),
-            optimizer_configs=training_config.get("optimizer_configs", None),
+            loss_config=training_config["loss_configs"],
+            optimizer_configs=training_config["optimizer_configs"],
             use_ema=use_ema,
             ema_copy=ema_copy if use_ema else None,
             force_input_mono=training_config.get("force_input_mono", False),
@@ -260,3 +260,12 @@ def create_demo_callback_from_config(model_config, **kwargs):
         )
     else:
         raise NotImplementedError(f'Unknown model type: {model_type}')
+
+
+def create_tqdm_callback_from_config(model_config, **kwargs):
+    from pytorch_lightning.callbacks import TQDMProgressBar
+    training_config = model_config.get('training', None)
+    assert training_config is not None, 'training config must be specified in model config'
+
+    tqdm_config = training_config.get("tqdm", {})
+    return TQDMProgressBar(**tqdm_config)

@@ -1,17 +1,16 @@
 import torch
-from einops import rearrange
 from torch import nn
+from einops import rearrange
 
 
 class Pretransform(nn.Module):
-    def __init__(self, enable_grad, io_channels, is_discrete):
+    def __init__(self, enable_grad: bool, io_channels: int, is_discrete: bool):
         super().__init__()
 
         self.is_discrete = is_discrete
         self.io_channels = io_channels
         self.encoded_channels = None
         self.downsampling_ratio = None
-
         self.enable_grad = enable_grad
 
     def encode(self, x):
