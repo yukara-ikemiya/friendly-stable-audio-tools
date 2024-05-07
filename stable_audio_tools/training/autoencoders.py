@@ -1,6 +1,7 @@
 
 import os
 import typing as tp
+from contextlib import nullcontext
 
 import torch
 import torchaudio
@@ -40,14 +41,13 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         self.automatic_optimization = False
 
         self.autoencoder = autoencoder
+        self.teacher_model = teacher_model
 
-        self.warmed_up = False
         self.warmup_steps = warmup_steps
         self.encoder_freeze_on_warmup = encoder_freeze_on_warmup
         self.lr = lr
         self.force_input_mono = force_input_mono
-
-        self.teacher_model = teacher_model
+        self.latent_mask_ratio = latent_mask_ratio
 
         self.optimizer_configs = optimizer_configs
         self.loss_config = loss_config
@@ -74,6 +74,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         self.gen_loss_modules = []
 
         # Adversarial and feature matching losses
+
         self.gen_loss_modules += [
             ValueLoss(key='loss_adv', weight=self.loss_config['discriminator']['weights']['adversarial'], name='loss_adv'),
             ValueLoss(key='feature_matching_distance', weight=self.loss_config['discriminator']
@@ -128,21 +129,15 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         self.losses_disc = MultiLoss(self.disc_loss_modules)
 
         # Set up EMA for model weights
-        self.autoencoder_ema = None
-
         self.use_ema = use_ema
-
-        if self.use_ema:
-            self.autoencoder_ema = EMA(
-                self.autoencoder,
-                ema_model=ema_copy,
-                beta=0.9999,
-                power=3 / 4,
-                update_every=1,
-                update_after_step=1
-            )
-
-        self.latent_mask_ratio = latent_mask_ratio
+        self.autoencoder_ema = EMA(
+            self.autoencoder,
+            ema_model=ema_copy,
+            beta=0.9999,
+            power=3 / 4,
+            update_every=1,
+            update_after_step=1
+        ) if use_ema else None
 
     def configure_optimizers(self):
 
@@ -158,37 +153,24 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         reals, _ = batch
+        warmed_up: bool = self.warmed_up
+        freeze_encoder: bool = warmed_up and self.encoder_freeze_on_warmup
+        distilled: bool = self.teacher_model is not None
 
         # Remove extra dimension added by WebDataset
         if reals.ndim == 4 and reals.shape[0] == 1:
             reals = reals[0]
 
-        if self.global_step >= self.warmup_steps:
-            self.warmed_up = True
+        encoder_input = reals.mean(dim=1, keepdim=True) if self.force_input_mono else reals
 
-        loss_info = {"reals": reals}
-
-        encoder_input = reals
-
-        if self.force_input_mono:
-            encoder_input = encoder_input.mean(dim=1, keepdim=True)
-
-        loss_info["encoder_input"] = encoder_input
-
-        data_std = encoder_input.std()
-
-        if self.warmed_up and self.encoder_freeze_on_warmup:
-            with torch.no_grad():
-                latents, encoder_info = self.autoencoder.encode(encoder_input, return_info=True)
-        else:
+        with torch.no_grad() if freeze_encoder else nullcontext():
             latents, encoder_info = self.autoencoder.encode(encoder_input, return_info=True)
 
-        loss_info["latents"] = latents
-
+        loss_info = {"reals": reals, "encoder_input": encoder_input, "latents": latents}
         loss_info.update(encoder_info)
 
         # Encode with teacher model for distillation
-        if self.teacher_model is not None:
+        if distilled:
             with torch.no_grad():
                 teacher_latents = self.teacher_model.encode(encoder_input, return_info=False)
                 loss_info['teacher_latents'] = teacher_latents
@@ -201,7 +183,6 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         decoded = self.autoencoder.decode(latents)
 
         loss_info["decoded"] = decoded
-
         if self.autoencoder.out_channels == 2:
             loss_info["decoded_left"] = decoded[:, 0:1, :]
             loss_info["decoded_right"] = decoded[:, 1:2, :]
@@ -209,17 +190,17 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             loss_info["reals_right"] = reals[:, 1:2, :]
 
         # Distillation
-        if self.teacher_model is not None:
+        if distilled:
             with torch.no_grad():
                 teacher_decoded = self.teacher_model.decode(teacher_latents)
                 own_latents_teacher_decoded = self.teacher_model.decode(latents)  # Distilled model's latents decoded by teacher
                 teacher_latents_own_decoded = self.autoencoder.decode(teacher_latents)  # Teacher's latents decoded by distilled model
 
-                loss_info['teacher_decoded'] = teacher_decoded
-                loss_info['own_latents_teacher_decoded'] = own_latents_teacher_decoded
-                loss_info['teacher_latents_own_decoded'] = teacher_latents_own_decoded
+            loss_info['teacher_decoded'] = teacher_decoded
+            loss_info['own_latents_teacher_decoded'] = own_latents_teacher_decoded
+            loss_info['teacher_latents_own_decoded'] = teacher_latents_own_decoded
 
-        if self.warmed_up:
+        if warmed_up:
             loss_dis, loss_adv, feature_matching_distance = self.discriminator.loss(reals, decoded)
         else:
             loss_dis = torch.tensor(0.).to(reals)
@@ -232,15 +213,14 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
         opt_gen, opt_disc = self.optimizers()
         lr_schedulers = self.lr_schedulers()
+        sched_gen, sched_disc = lr_schedulers if lr_schedulers else (None, None)
 
-        sched_gen = None
-        sched_disc = None
+        # Training step
 
-        if lr_schedulers is not None:
-            sched_gen, sched_disc = lr_schedulers
+        training_disc: bool = self.global_step % 2 and warmed_up  # weird behaviour of PyTorch Lightning
 
-        # Train the discriminator
-        if self.global_step % 2 and self.warmed_up:
+        if training_disc:
+            # Train the discriminator
             loss, losses = self.losses_disc(loss_info)
 
             log_dict = {
@@ -251,12 +231,11 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             self.manual_backward(loss)
             opt_disc.step()
 
-            if sched_disc is not None:
-                # sched step every step
+            if sched_disc:
+                # scheduler step
                 sched_disc.step()
-
-        # Train the generator
         else:
+            # Train the generator
             loss, losses = self.losses_gen(loss_info)
 
             if self.use_ema:
@@ -266,14 +245,14 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             self.manual_backward(loss)
             opt_gen.step()
 
-            if sched_gen is not None:
-                # scheduler step every step
+            if sched_gen:
+                # scheduler step
                 sched_gen.step()
 
             log_dict = {
                 'train/loss': loss.detach(),
                 'train/latent_std': latents.std().detach(),
-                'train/data_std': data_std.detach(),
+                'train/data_std': encoder_input.std().detach(),
                 'train/gen_lr': opt_gen.param_groups[0]['lr']
             }
 
@@ -285,15 +264,16 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         return loss
 
     def export_model(self, path, use_safetensors=False):
-        if self.autoencoder_ema is not None:
-            model = self.autoencoder_ema.ema_model
-        else:
-            model = self.autoencoder
+        model = self.autoencoder_ema.ema_model if self.autoencoder_ema else self.autoencoder
 
         if use_safetensors:
             save_model(model, path)
         else:
             torch.save({"state_dict": model.state_dict()}, path)
+
+    @property
+    def warmed_up(self) -> bool:
+        return self.global_step >= self.warmup_steps
 
 
 class AutoencoderDemoCallback(pl.Callback):
