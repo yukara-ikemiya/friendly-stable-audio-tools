@@ -17,7 +17,7 @@ from ..models.autoencoders import AudioAutoencoder
 from ..models.discriminators import EncodecDiscriminator, OobleckDiscriminator, DACGANLoss
 from ..models.bottleneck import VAEBottleneck, RVQBottleneck, DACRVQBottleneck, DACRVQVAEBottleneck, RVQVAEBottleneck, WassersteinBottleneck
 from .losses import MultiLoss, AuralossLoss, ValueLoss, L1Loss
-from .utils import create_optimizer_from_config, create_scheduler_from_config
+from .scheduler import create_optimizer_from_config, create_scheduler_from_config
 
 
 class AutoencoderTrainingWrapper(pl.LightningModule):
