@@ -719,14 +719,10 @@ def create_encoder_from_config(encoder_config: Dict[str, Any]):
     assert encoder_type is not None, "Encoder type must be specified"
 
     if encoder_type == "oobleck":
-        encoder = OobleckEncoder(
-            **encoder_config["config"]
-        )
-
+        encoder = OobleckEncoder(**encoder_config["config"])
     elif encoder_type == "seanet":
         from encodec.modules import SEANetEncoder
         seanet_encoder_config = encoder_config["config"]
-
         # SEANet encoder expects strides in reverse order
         seanet_encoder_config["ratios"] = list(reversed(seanet_encoder_config.get("ratios", [2, 2, 2, 2, 2])))
         encoder = SEANetEncoder(
@@ -734,16 +730,11 @@ def create_encoder_from_config(encoder_config: Dict[str, Any]):
         )
     elif encoder_type == "dac":
         dac_config = encoder_config["config"]
-
         encoder = DACEncoderWrapper(**dac_config)
     elif encoder_type == "local_attn":
         from .local_attention import TransformerEncoder1D
-
         local_attn_config = encoder_config["config"]
-
-        encoder = TransformerEncoder1D(
-            **local_attn_config
-        )
+        encoder = TransformerEncoder1D(**local_attn_config)
     else:
         raise ValueError(f"Unknown encoder type {encoder_type}")
 

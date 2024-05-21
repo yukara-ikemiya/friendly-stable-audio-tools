@@ -85,19 +85,22 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             # Distillation losses
             stft_loss_weight = self.loss_config['spectral']['weights']['mrstft'] * 0.25
             self.gen_loss_modules += [
-                AuralossLoss(self.sdstft, 'reals', 'decoded', name='mrstft_loss', weight=stft_loss_weight),  # Reconstruction loss
-                AuralossLoss(self.sdstft, 'decoded', 'teacher_decoded', name='mrstft_loss_distill',
-                             weight=stft_loss_weight),  # Distilled model's decoder is compatible with teacher's decoder
-                AuralossLoss(self.sdstft, 'reals', 'own_latents_teacher_decoded', name='mrstft_loss_own_latents_teacher',
-                             weight=stft_loss_weight),  # Distilled model's encoder is compatible with teacher's decoder
-                AuralossLoss(self.sdstft, 'reals', 'teacher_latents_own_decoded', name='mrstft_loss_teacher_latents_own',
-                             weight=stft_loss_weight)  # Teacher's encoder is compatible with distilled model's decoder
+                # Reconstruction loss
+                AuralossLoss(self.sdstft, 'reals', 'decoded', name='mrstft_loss', weight=stft_loss_weight),
+                # Distilled model's decoder is compatible with teacher's decoder
+                AuralossLoss(self.sdstft, 'decoded', 'teacher_decoded', name='mrstft_loss_distill', weight=stft_loss_weight),
+                # Distilled model's encoder is compatible with teacher's decoder
+                AuralossLoss(self.sdstft, 'reals', 'own_latents_teacher_decoded',
+                             name='mrstft_loss_own_latents_teacher', weight=stft_loss_weight),
+                # Teacher's encoder is compatible with distilled model's decoder
+                AuralossLoss(self.sdstft, 'reals', 'teacher_latents_own_decoded',
+                             name='mrstft_loss_teacher_latents_own', weight=stft_loss_weight)
             ]
-
         else:
             # Reconstruction loss
             self.gen_loss_modules += [
-                AuralossLoss(self.sdstft, 'reals', 'decoded', name='mrstft_loss', weight=self.loss_config['spectral']['weights']['mrstft']),
+                AuralossLoss(self.sdstft, 'reals', 'decoded', name='mrstft_loss',
+                             weight=self.loss_config['spectral']['weights']['mrstft']),
             ]
 
             if self.autoencoder.out_channels == 2:
@@ -110,12 +113,15 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
                 ]
 
             self.gen_loss_modules += [
-                AuralossLoss(self.sdstft, 'reals', 'decoded', name='mrstft_loss', weight=self.loss_config['spectral']['weights']['mrstft']),
+                AuralossLoss(self.sdstft, 'reals', 'decoded', name='mrstft_loss',
+                             weight=self.loss_config['spectral']['weights']['mrstft']),
             ]
 
         if self.loss_config['time']['weights']['l1'] > 0.0:
-            self.gen_loss_modules.append(L1Loss(key_a='reals', key_b='decoded',
-                                         weight=self.loss_config['time']['weights']['l1'], name='l1_time_loss'))
+            self.gen_loss_modules.append(
+                L1Loss(key_a='reals', key_b='decoded',
+                       weight=self.loss_config['time']['weights']['l1'], name='l1_time_loss')
+            )
 
         if self.autoencoder.bottleneck is not None:
             self.gen_loss_modules += create_loss_modules_from_bottleneck(self.autoencoder.bottleneck, self.loss_config)

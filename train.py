@@ -7,7 +7,6 @@ import torch
 import pytorch_lightning as pl
 from prefigure.prefigure import get_all_args, push_wandb_config
 
-
 from stable_audio_tools.data.dataset import create_dataloader_from_config
 from stable_audio_tools.models import create_model_from_config
 from stable_audio_tools.models.utils import load_ckpt_state_dict, remove_weight_norm_from_model
