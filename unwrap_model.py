@@ -41,6 +41,7 @@ if __name__ == '__main__':
             autoencoder=model,
             strict=False,
             loss_config=training_config["loss_configs"],
+            optimizer_configs=training_config["optimizer_configs"],
             use_ema=training_config["use_ema"],
             ema_copy=ema_copy
         )

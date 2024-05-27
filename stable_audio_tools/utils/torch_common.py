@@ -5,6 +5,13 @@ import numpy as np
 import torch
 
 
+def get_world_size():
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        return 1
+    else:
+        return torch.distributed.get_world_size()
+
+
 def get_rank():
     """Get rank of current process."""
 
@@ -28,6 +35,11 @@ def set_seed(seed: int = 0):
     np.random.seed(seed)
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
+
+
+def count_parameters(model: torch.nn.Module):
+    return sum(p.numel() for p in model.parameters()) + \
+        sum(p.numel() for p in model.buffers())
 
 
 def copy_state_dict(model, state_dict):

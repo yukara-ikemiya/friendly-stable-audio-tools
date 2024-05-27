@@ -251,10 +251,10 @@ class AudioAutoencoder(nn.Module):
         self,
         encoder,
         decoder,
-        latent_dim,
-        downsampling_ratio,
-        sample_rate,
-        io_channels=2,
+        latent_dim: int,
+        downsampling_ratio: int,
+        sample_rate: int,
+        io_channels: int = 2,
         bottleneck: Bottleneck = None,
         pretransform: Pretransform = None,
         in_channels: Optional[int] = None,
@@ -587,10 +587,11 @@ class AudioAutoencoder(nn.Module):
 
             return audios
 
+    @torch.no_grad()
     def reconstruct_audio(
         self,
         audio,
-        chunked: bool = False,
+        chunked: bool = True,
         chunk_size: int = 128,
         overlap: int = 4,
         max_batch_size: int = 1,
@@ -602,14 +603,10 @@ class AudioAutoencoder(nn.Module):
         bs, n_ch, sample_length = audio.shape
         compress_ratio = self.downsampling_ratio
         assert n_ch == self.in_channels
-        assert sample_length % compress_ratio == 0, 'The audio length must be a multiple of compression ratio.'
 
         # window for cross-fade of audio samples
         overlap_s = overlap * compress_ratio
         win = torch.bartlett_window(overlap_s * 2, device=audio.device)
-
-        # window for cross-fade of latent vectors
-        win = torch.bartlett_window(overlap * 2, device=audio.device)
 
         if not chunked:
             return self.decode(self.encode(audio, **kwargs), **kwargs)
@@ -623,7 +620,7 @@ class AudioAutoencoder(nn.Module):
 
             # zero padding
             n_chunk = int(math.ceil(sample_length - chunk_size) / hopsize) + 1
-            pad_len = chunk_size + hopsize * (n_chunk - 1) - sample_length
+            pad_len = chunk_size + hopsize * n_chunk - sample_length
             audio = F.pad(audio, (0, pad_len))
 
             chunks = []
@@ -656,8 +653,9 @@ class AudioAutoencoder(nn.Module):
                 if i != n_chunk - 1:
                     x_[:, :, -overlap_s:] *= win[None, None, -overlap_s:]
 
+                # print(audio_rec.shape, head, chunk_size, x_.shape)
                 head = i * hopsize
-                audio_rec[head: head + chunk_size] += x_
+                audio_rec[:, :, head: head + chunk_size] += x_
 
             # fix size
             audio_rec = audio_rec[..., :sample_length]  # (bs, n_ch, sample_length)
@@ -789,7 +787,6 @@ def create_autoencoder_from_config(config: Dict[str, Any]):
 
     encoder = create_encoder_from_config(ae_config["encoder"])
     decoder = create_decoder_from_config(ae_config["decoder"])
-
     bottleneck = ae_config.get("bottleneck", None)
 
     latent_dim = ae_config.get("latent_dim", None)

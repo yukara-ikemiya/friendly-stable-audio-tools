@@ -1,7 +1,7 @@
 
 from torchaudio import transforms as T
 
-from ..data.utils import PadCrop
+from ..data.modification import PadCrop
 
 
 def set_audio_channels(audio, target_channels):

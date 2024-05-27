@@ -14,7 +14,7 @@ try:
     from flash_attn import flash_attn_func, flash_attn_kvpacked_func
 except ImportError as e:
     print(e)
-    print('flash_attn not installed, disabling Flash Attention')
+    print('flash_attn not installed, disabling flash_attn')
     flash_attn_kvpacked_func = None
     flash_attn_func = None
 
@@ -54,8 +54,9 @@ class AbsolutePositionalEmbedding(nn.Module):
 
     def forward(self, x, pos=None, seq_start_pos=None):
         seq_len, device = x.shape[1], x.device
-        assert seq_len <= self.max_seq_len, f'you are passing in a sequence length of {
-            seq_len} but your absolute positional embedding has a max sequence length of {self.max_seq_len}'
+        assert seq_len <= self.max_seq_len, \
+            f"you are passing in a sequence length of {seq_len} \
+                but your absolute positional embedding has a max sequence length of {self.max_seq_len}"
 
         if pos is None:
             pos = torch.arange(seq_len, device=device)

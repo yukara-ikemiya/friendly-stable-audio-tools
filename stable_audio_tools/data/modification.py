@@ -6,6 +6,8 @@ from torch import nn
 from typing import Tuple
 
 
+# Padding
+
 class PadCrop(nn.Module):
     def __init__(self, n_samples, randomize=True):
         super().__init__()
@@ -71,17 +73,7 @@ class PadCrop_Normalized_T(nn.Module):
         )
 
 
-class PhaseFlipper(nn.Module):
-    """Randomly invert the phase of a signal"""
-
-    def __init__(self, p=0.5):
-        super().__init__()
-        self.p = p
-
-    def __call__(self, x: torch.Tensor):
-        assert len(x.shape) <= 2
-        return -x if (random.random() < self.p) else x
-
+# Channels
 
 class Mono(nn.Module):
     def __call__(self, x: torch.Tensor):
@@ -103,3 +95,17 @@ class Stereo(nn.Module):
                 x = x[:2, :]
 
         return x
+
+
+# Augumentation
+
+class PhaseFlipper(nn.Module):
+    """Randomly invert the phase of a signal"""
+
+    def __init__(self, p=0.5):
+        super().__init__()
+        self.p = p
+
+    def __call__(self, x: torch.Tensor):
+        assert len(x.shape) <= 2
+        return -x if (random.random() < self.p) else x
