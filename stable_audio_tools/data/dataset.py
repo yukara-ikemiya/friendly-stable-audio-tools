@@ -7,6 +7,8 @@ import re
 import subprocess
 import time
 import typing as tp
+import json
+from pathlib import Path
 
 import torch
 from torchaudio import transforms as T
@@ -105,7 +107,6 @@ class AudioFolderDataset(torch.utils.data.Dataset):
         assert force_channels in ['mono', 'stereo']
 
         super().__init__()
-        self.filenames = []
         self.relpath = relpath
         self.sr = sample_rate
         self.force_channels = force_channels
@@ -169,10 +170,15 @@ class AudioFolderDataset(torch.utils.data.Dataset):
             info["seconds_start"] = seconds_start
             info["seconds_total"] = seconds_total
             info["padding_mask"] = padding_mask
+            info["load_time"] = time.time() - start_time
 
-            end_time = time.time()
+            # Load a JSON metadata file if it exists
+            metadata_path = Path(audio_filename).with_suffix('.json')
+            if metadata_path.exists():
+                with metadata_path.open('r') as f:
+                    metadata = json.load(f)
 
-            info["load_time"] = end_time - start_time
+                info.update(metadata)
 
             if self.custom_metadata_fn is not None:
                 custom_metadata = self.custom_metadata_fn(info, audio)
@@ -180,6 +186,9 @@ class AudioFolderDataset(torch.utils.data.Dataset):
 
                 if "__reject__" in info and info["__reject__"]:
                     return self[random.randrange(len(self))]
+
+            # Set a dummy prompt if 'prompt' doesn't exist
+            info.setdefault('prompt', 'This is a dummy prompt')
 
             return (audio, info)
         except Exception as e:
@@ -515,18 +524,12 @@ def create_dataloader_from_config(
     assert dataset_type, "Dataset type must be specified in dataset config"
     assert audio_channels in [1, 2], f"Audio channel must be 1 or 2 -> found {audio_channels}."
 
-    if audio_channels == 1:
-        force_channels = "mono"
-    else:
-        force_channels = "stereo"
+    force_channels = "mono" if audio_channels == 1 else "stereo"
 
     if dataset_type == "audio_dir":
 
         audio_dir_configs = dataset_config.get("datasets", None)
-
-        assert audio_dir_configs is not None, "Directory configuration must be specified in datasets[\"dataset\"]"
-
-        training_dirs = []
+        assert audio_dir_configs is not None, "Directory configuration must be specified in \"dataset\"."
 
         custom_metadata_fn = None
         custom_metadata_module_path = dataset_config.get("custom_metadata_module", None)
@@ -535,9 +538,9 @@ def create_dataloader_from_config(
             spec = importlib.util.spec_from_file_location("metadata_module", custom_metadata_module_path)
             metadata_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(metadata_module)
-
             custom_metadata_fn = metadata_module.get_custom_metadata
 
+        training_dirs = []
         for audio_dir_config in audio_dir_configs:
             audio_dir_path = audio_dir_config.get("path", None)
             assert audio_dir_path is not None, "Path must be set for local audio directory configuration"

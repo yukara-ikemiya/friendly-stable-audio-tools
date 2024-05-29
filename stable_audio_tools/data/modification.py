@@ -1,9 +1,9 @@
 import math
 import random
-import torch
+import typing as tp
 
+import torch
 from torch import nn
-from typing import Tuple
 
 
 # Padding
@@ -26,41 +26,38 @@ class PadCrop(nn.Module):
 class PadCrop_Normalized_T(nn.Module):
 
     def __init__(self, n_samples: int, sample_rate: int, randomize: bool = True):
-
         super().__init__()
-
         self.n_samples = n_samples
         self.sample_rate = sample_rate
         self.randomize = randomize
 
-    def __call__(self, source: torch.Tensor) -> Tuple[torch.Tensor, float, float, int, int]:
+    def __call__(self, source: torch.Tensor) -> tp.Tuple[torch.Tensor, float, float, int, int, torch.Tensor]:
 
         n_channels, n_samples = source.shape
+        # maximum offset
+        max_ofs = max(0, n_samples - self.n_samples)
+        # full-track length
+        full_length = max_ofs + self.n_samples
+        # set random offset if self.randomize is true
+        offset = random.randint(0, max_ofs) if (self.randomize and max_ofs) else 0
 
-        # If the audio is shorter than the desired length, pad it
-        upper_bound = max(0, n_samples - self.n_samples)
+        # the start and end positions in full-track (0.0 -- 1.0)
+        t_start = offset / full_length
+        t_end = (offset + self.n_samples) / full_length
 
-        # If randomize is False, always start at the beginning of the audio
-        offset = 0
-        if (self.randomize and n_samples > self.n_samples):
-            offset = random.randint(0, upper_bound)
-
-        # Calculate the start and end times of the chunk
-        t_start = offset / (upper_bound + self.n_samples)
-        t_end = (offset + self.n_samples) / (upper_bound + self.n_samples)
-
-        # Create the chunk
+        # new chunk
         chunk = source.new_zeros([n_channels, self.n_samples])
-
-        # Copy the audio into the chunk
         chunk[:, :min(n_samples, self.n_samples)] = source[:, offset:offset + self.n_samples]
 
-        # Calculate the start and end times of the chunk in seconds
+        # offset and full length of the original track in seconds (int)
+        # NOTE (by Yukara): I'm not sure why these values are rounded to Int,
+        #                   but one assumption is that developers might want to reduce complexity of
+        #                   embeddings of NumberConditioner by discretizing input values.
         seconds_start = math.floor(offset / self.sample_rate)
         seconds_total = math.ceil(n_samples / self.sample_rate)
 
         # Create a mask the same length as the chunk with 1s where the audio is and 0s where it isn't
-        padding_mask = torch.zeros([self.n_samples])
+        padding_mask = torch.zeros([self.n_samples], device=source.device)
         padding_mask[:min(n_samples, self.n_samples)] = 1
 
         return (
