@@ -38,10 +38,10 @@ def main():
 
     # Get JSON config from args.model_config
     with open(args.model_config) as f:
-        model_config = json.load(f)
+        model_config: dict = json.load(f)
 
     with open(args.dataset_config) as f:
-        dataset_config = json.load(f)
+        dataset_config: dict = json.load(f)
 
     train_dl = create_dataloader_from_config(
         dataset_config,
@@ -81,7 +81,8 @@ def main():
         save_dir = None
         checkpoint_dir = None
 
-    ckpt_callback = pl.callbacks.ModelCheckpoint(every_n_train_steps=args.checkpoint_every, dirpath=checkpoint_dir, save_top_k=-1)
+    ckpt_config = model_config["training"].get("checkpoint", {"every_n_train_steps": 10000, "save_top_k": 1, "save_last": True})
+    ckpt_callback = pl.callbacks.ModelCheckpoint(**ckpt_config, dirpath=checkpoint_dir)
     save_model_config_callback = ModelConfigEmbedderCallback(model_config)
 
     demo_callback = create_demo_callback_from_config(model_config, demo_dl=train_dl)

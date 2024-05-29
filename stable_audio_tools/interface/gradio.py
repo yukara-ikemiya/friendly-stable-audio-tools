@@ -5,7 +5,6 @@ import json
 import torch
 import torchaudio
 from torchaudio import transforms as T
-from aeiou.viz import audio_spectrogram_image
 from einops import rearrange
 
 from ..inference.generation import generate_diffusion_cond, generate_diffusion_uncond
@@ -13,6 +12,7 @@ from ..models.factory import create_model_from_config
 from ..models.pretrained import get_pretrained_model
 from ..models.utils import load_ckpt_state_dict
 from ..utils.torch_common import copy_state_dict
+from ..training.viz import audio_spectrogram_image
 
 model = None
 sample_rate = 32000

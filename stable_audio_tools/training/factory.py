@@ -52,13 +52,15 @@ def create_training_wrapper_from_config(model_config, model):
             ema_copy=ema_copy if use_ema else None,
             force_input_mono=training_config.get("force_input_mono", False),
             latent_mask_ratio=latent_mask_ratio,
-            teacher_model=teacher_model
+            teacher_model=teacher_model,
+            logging_config=training_config.get('logging', {})
         )
     elif model_type == 'diffusion_uncond':
         from .diffusion import DiffusionUncondTrainingWrapper
         return DiffusionUncondTrainingWrapper(
             model,
             lr=training_config["learning_rate"],
+            logging_config=training_config.get('logging', {})
         )
     elif model_type == 'diffusion_cond':
         from .diffusion import DiffusionCondTrainingWrapper
@@ -72,6 +74,7 @@ def create_training_wrapper_from_config(model_config, model):
             log_loss_info=training_config.get("log_loss_info", False),
             optimizer_configs=training_config.get("optimizer_configs", None),
             use_reconstruction_loss=training_config.get("use_reconstruction_loss", False),
+            logging_config=training_config.get('logging', {})
         )
     elif model_type == 'diffusion_prior':
         from .diffusion import DiffusionPriorTrainingWrapper
@@ -127,22 +130,6 @@ def create_training_wrapper_from_config(model_config, model):
             lr=training_config["learning_rate"],
             use_reconstruction_loss=training_config.get("use_reconstruction_loss", False)
         )
-    elif model_type == 'musicgen':
-        from .musicgen import MusicGenTrainingWrapper
-
-        ema_copy = create_model_from_config(model_config).lm
-
-        for name, param in model.lm.state_dict().items():
-            if isinstance(param, Parameter):
-                # backwards compatibility for serialized parameters
-                param = param.data
-            ema_copy.state_dict()[name].copy_(param)
-
-        return MusicGenTrainingWrapper(
-            model,
-            ema_copy=ema_copy,
-            lr=training_config["learning_rate"]
-        )
     elif model_type == 'lm':
         from .lm import AudioLanguageModelTrainingWrapper
 
@@ -161,7 +148,6 @@ def create_training_wrapper_from_config(model_config, model):
             use_ema=training_config.get("use_ema", False),
             optimizer_configs=training_config.get("optimizer_configs", None),
         )
-
     else:
         raise NotImplementedError(f'Unknown model type: {model_type}')
 
@@ -232,17 +218,6 @@ def create_demo_callback_from_config(model_config, **kwargs):
             sample_rate=model_config["sample_rate"],
             demo_steps=demo_config.get("demo_steps", 250),
             demo_cfg_scales=demo_config["demo_cfg_scales"],
-            **kwargs
-        )
-    elif model_type == "musicgen":
-        from .musicgen import MusicGenDemoCallback
-
-        return MusicGenDemoCallback(
-            demo_every=demo_config.get("demo_every", 2000),
-            sample_size=model_config["sample_size"],
-            sample_rate=model_config["sample_rate"],
-            demo_cfg_scales=demo_config["demo_cfg_scales"],
-            demo_conditioning=demo_config["demo_cond"],
             **kwargs
         )
 

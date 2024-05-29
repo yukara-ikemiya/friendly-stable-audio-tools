@@ -1,9 +1,11 @@
+
+from functools import reduce
+import typing as tp
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-from functools import reduce
-import typing as tp
 from einops import rearrange
 from audiotools import AudioSignal, STFTParams
 from dac.model.discriminator import WNConv1d, WNConv2d
@@ -120,10 +122,7 @@ class SharedDiscriminatorConvNet(nn.Module):
 
 class MultiScaleDiscriminator(nn.Module):
 
-    def __init__(self,
-                 in_channels: int,
-                 n_scales: int,
-                 **conv_kwargs) -> None:
+    def __init__(self, in_channels: int, n_scales: int, **conv_kwargs) -> None:
         super().__init__()
         layers = []
         for _ in range(n_scales):
@@ -138,15 +137,13 @@ class MultiScaleDiscriminator(nn.Module):
             score = score + s
             features.extend(f)
             x = nn.functional.avg_pool1d(x, 2)
+
         return score, features
 
 
 class MultiPeriodDiscriminator(nn.Module):
 
-    def __init__(self,
-                 in_channels: int,
-                 periods: tp.Sequence[int],
-                 **conv_kwargs) -> None:
+    def __init__(self, in_channels: int, periods: tp.Sequence[int], **conv_kwargs) -> None:
         super().__init__()
         layers = []
         self.periods = periods

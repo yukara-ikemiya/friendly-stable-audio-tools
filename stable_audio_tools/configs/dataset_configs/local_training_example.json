@@ -2,10 +2,10 @@
     "dataset_type": "audio_dir",
     "datasets": [
         {
-            "id": "my_audio",
-            "path": "/path/to/audio/dataset/"
+            "id": "example",
+            "path": "example/dataset/"
         }
     ],
-    "custom_metadata_module": "/path/to/custom_metadata/custom_md_example.py",
+    "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/custom_md_example.py",
     "random_crop": true
 }

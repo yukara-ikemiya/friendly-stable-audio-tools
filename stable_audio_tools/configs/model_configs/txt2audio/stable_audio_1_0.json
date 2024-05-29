@@ -91,17 +91,28 @@
     },
     "training": {
         "learning_rate": 4e-5,
+        "logging":{
+            "log_every": 20
+        },
+        "checkpoint":{
+            "every_n_train_steps": 10000,
+            "save_top_k": 2,
+            "monitor": "train/mse_loss",
+            "save_last": true
+        },
         "demo": {
             "demo_every": 2000,
             "demo_steps": 250,
-            "num_demos": 4,
+            "num_demos": 3,
             "demo_cond": [
-                {"prompt": "A beautiful piano arpeggio", "seconds_start": 0, "seconds_total": 95},
-                {"prompt": "A tropical house track with upbeat melodies, a driving bassline, and cheery vibes", "seconds_start": 0, "seconds_total": 90},
+                {"prompt": "This is a dummy prompt", "seconds_start": 0, "seconds_total": 80},
                 {"prompt": "A cool 80s glam rock song with driving drums and distorted guitars", "seconds_start": 0, "seconds_total": 180},
                 {"prompt": "A grand orchestral arrangement with thunderous percussion, epic brass fanfares, and soaring strings, creating a cinematic atmosphere fit for a heroic battle.", "seconds_start": 0, "seconds_total": 60}
             ],
-            "demo_cfg_scales": [3, 6, 9]
+            "demo_cfg_scales": [3, 9]
+        },
+        "tqdm": {
+            "refresh_rate": 100
         }
     }
 }

@@ -1,19 +1,19 @@
 # Heavily influenced by https://github.com/facebookresearch/audiocraft/blob/main/audiocraft/modules/conditioners.py
 
-import torch
 import logging
 import warnings
 import string
 import typing as tp
 import gc
 
+import torch
+from torch import nn
+
 from .adp import NumberEmbedder
 from ..inference.utils import set_audio_channels
 from .factory import create_pretransform_from_config
 from .pretransforms import Pretransform
 from .utils import load_ckpt_state_dict
-
-from torch import nn
 
 
 class Conditioner(nn.Module):
@@ -30,60 +30,67 @@ class Conditioner(nn.Module):
         self.output_dim = output_dim
         self.proj_out = nn.Linear(dim, output_dim) if (dim != output_dim or project_out) else nn.Identity()
 
+    def set_device(self, device: tp.Any) -> None:
+        raise NotImplementedError()
+
     def forward(self, x: tp.Any) -> tp.Any:
         raise NotImplementedError()
 
 
 class IntConditioner(Conditioner):
-    def __init__(self,
-                 output_dim: int,
-                 min_val: int = 0,
-                 max_val: int = 512
-                 ):
+    def __init__(self, output_dim: int, min_val: int = 0, max_val: int = 512):
         super().__init__(output_dim, output_dim)
 
         self.min_val = min_val
         self.max_val = max_val
         self.int_embedder = nn.Embedding(max_val - min_val + 1, output_dim).requires_grad_(True)
+        self.device = next(self.int_embedder.parameters()).device
 
-    def forward(self, ints: tp.List[int], device=None) -> tp.Any:
+    def set_device(self, device):
+        self.to(device)
+        self.device = device
 
-        # self.int_embedder.to(device)
+    def forward(self, ints: tp.List[int]) -> tp.Any:
+        self.device = next(self.int_embedder.parameters()).device
 
-        ints = torch.tensor(ints).to(device)
+        ints = torch.tensor(ints).to(self.device)
         ints = ints.clamp(self.min_val, self.max_val)
 
         int_embeds = self.int_embedder(ints).unsqueeze(1)
 
-        return [int_embeds, torch.ones(int_embeds.shape[0], 1).to(device)]
+        return [int_embeds, torch.ones(int_embeds.shape[0], 1).to(self.device)]
 
 
 class NumberConditioner(Conditioner):
-    '''
-        Conditioner that takes a list of floats, normalizes them for a given range, and returns a list of embeddings
-    '''
+    """
+    Conditioner that takes a list of floats, normalizes them for a given range, and returns a list of embeddings
+    """
 
-    def __init__(self,
-                 output_dim: int,
-                 min_val: float = 0,
-                 max_val: float = 1
-                 ):
+    def __init__(
+        self,
+        output_dim: int,
+        min_val: float = 0,
+        max_val: float = 1
+    ):
         super().__init__(output_dim, output_dim)
 
         self.min_val = min_val
         self.max_val = max_val
-
         self.embedder = NumberEmbedder(features=output_dim)
+        self.device = next(self.embedder.parameters()).device
 
-    def forward(self, floats: tp.List[float], device=None) -> tp.Any:
+    def set_device(self, device):
+        self.to(device)
+        self.device = device
+
+    def forward(self, floats: tp.List[float]) -> tp.Any:
+        # Update self.device
+        self.device = next(self.embedder.parameters()).device
 
         # Cast the inputs to floats
         floats = [float(x) for x in floats]
-
-        floats = torch.tensor(floats).to(device)
-
+        floats = torch.tensor(floats).to(self.device)
         floats = floats.clamp(self.min_val, self.max_val)
-
         normalized_floats = (floats - self.min_val) / (self.max_val - self.min_val)
 
         # Cast floats to same type as embedder
@@ -92,24 +99,27 @@ class NumberConditioner(Conditioner):
 
         float_embeds = self.embedder(normalized_floats).unsqueeze(1)
 
-        return [float_embeds, torch.ones(float_embeds.shape[0], 1).to(device)]
+        return [float_embeds, torch.ones(float_embeds.shape[0], 1).to(self.device)]
 
 
 class CLAPTextConditioner(Conditioner):
-    def __init__(self,
-                 output_dim: int,
-                 clap_ckpt_path,
-                 use_text_features=False,
-                 feature_layer_ix: int = -1,
-                 audio_model_type="HTSAT-base",
-                 enable_fusion=True,
-                 project_out: bool = False,
-                 finetune: bool = False):
+    def __init__(
+        self,
+        output_dim: int,
+        clap_ckpt_path: str,
+        use_text_features=False,
+        feature_layer_ix: int = -1,
+        audio_model_type="HTSAT-base",
+        enable_fusion=True,
+        project_out: bool = False,
+        finetune: bool = False
+    ):
         super().__init__(768 if use_text_features else 512, output_dim, project_out=project_out)
 
         self.use_text_features = use_text_features
         self.feature_layer_ix = feature_layer_ix
         self.finetune = finetune
+        self.device = 'cpu'
 
         # Suppress logging from transformers
         previous_level = logging.root.manager.disable
@@ -136,7 +146,6 @@ class CLAPTextConditioner(Conditioner):
                 else:
                     self.model.model.text_branch.requires_grad_(False)
                     self.model.model.text_branch.eval()
-
             finally:
                 logging.disable(previous_level)
 
@@ -145,27 +154,31 @@ class CLAPTextConditioner(Conditioner):
         gc.collect()
         torch.cuda.empty_cache()
 
-    def get_clap_features(self, prompts, layer_ix=-2, device: tp.Any = "cuda"):
+    def set_device(self, device):
+        self.to(device)
+        self.model.to(device)
+        self.device = device
+
+    def get_clap_features(self, prompts, layer_ix=-2):
         prompt_tokens = self.model.tokenizer(prompts)
-        attention_mask = prompt_tokens["attention_mask"].to(device=device, non_blocking=True)
+        attention_mask = prompt_tokens["attention_mask"].to(device=self.device, non_blocking=True)
         prompt_features = self.model.model.text_branch(
-            input_ids=prompt_tokens["input_ids"].to(device=device, non_blocking=True),
+            input_ids=prompt_tokens["input_ids"].to(device=self.device, non_blocking=True),
             attention_mask=attention_mask,
             output_hidden_states=True
         )["hidden_states"][layer_ix]
 
         return prompt_features, attention_mask
 
-    def forward(self, texts: tp.List[str], device: tp.Any = "cuda") -> tp.Any:
-        self.model.to(device)
-
+    def forward(self, texts: tp.List[str]) -> tp.Any:
         if self.use_text_features:
             if len(texts) == 1:
-                text_features, text_attention_mask = self.get_clap_features([texts[0], ""], layer_ix=self.feature_layer_ix, device=device)
+                text_features, text_attention_mask = self.get_clap_features([texts[0], ""], layer_ix=self.feature_layer_ix)
                 text_features = text_features[:1, ...]
                 text_attention_mask = text_attention_mask[:1, ...]
             else:
-                text_features, text_attention_mask = self.get_clap_features(texts, layer_ix=self.feature_layer_ix, device=device)
+                text_features, text_attention_mask = self.get_clap_features(texts, layer_ix=self.feature_layer_ix)
+
             return [self.proj_out(text_features), text_attention_mask]
 
         # Fix for CLAP bug when only one text is passed
@@ -174,21 +187,22 @@ class CLAPTextConditioner(Conditioner):
         else:
             text_embedding = self.model.get_text_embedding(texts, use_tensor=True)
 
-        text_embedding = text_embedding.unsqueeze(1).to(device)
+        text_embedding = text_embedding.unsqueeze(1)
 
-        return [self.proj_out(text_embedding), torch.ones(text_embedding.shape[0], 1).to(device)]
+        return [self.proj_out(text_embedding), torch.ones(text_embedding.shape[0], 1).to(self.device)]
 
 
 class CLAPAudioConditioner(Conditioner):
-    def __init__(self,
-                 output_dim: int,
-                 clap_ckpt_path,
-                 audio_model_type="HTSAT-base",
-                 enable_fusion=True,
-                 project_out: bool = False):
+    def __init__(
+        self,
+        output_dim: int,
+        clap_ckpt_path: str,
+        audio_model_type="HTSAT-base",
+        enable_fusion=True,
+        project_out: bool = False
+    ):
         super().__init__(512, output_dim, project_out=project_out)
-
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = 'cpu'
 
         # Suppress logging from transformers
         previous_level = logging.root.manager.disable
@@ -224,10 +238,12 @@ class CLAPAudioConditioner(Conditioner):
         gc.collect()
         torch.cuda.empty_cache()
 
-    def forward(self, audios: tp.Union[torch.Tensor, tp.List[torch.Tensor], tp.Tuple[torch.Tensor]], device: tp.Any = "cuda") -> tp.Any:
-
+    def set_device(self, device):
+        self.to(device)
         self.model.to(device)
+        self.device = device
 
+    def forward(self, audios: tp.Union[torch.Tensor, tp.List[torch.Tensor], tp.Tuple[torch.Tensor]]) -> tp.Any:
         if isinstance(audios, list) or isinstance(audios, tuple):
             audios = torch.cat(audios, dim=0)
 
@@ -237,9 +253,9 @@ class CLAPAudioConditioner(Conditioner):
         with torch.cuda.amp.autocast(enabled=False):
             audio_embedding = self.model.get_audio_embedding_from_data(mono_audios.float(), use_tensor=True)
 
-        audio_embedding = audio_embedding.unsqueeze(1).to(device)
+        audio_embedding = audio_embedding.unsqueeze(1)
 
-        return [self.proj_out(audio_embedding), torch.ones(audio_embedding.shape[0], 1).to(device)]
+        return [self.proj_out(audio_embedding), torch.ones(audio_embedding.shape[0], 1).to(self.device)]
 
 
 class T5Conditioner(Conditioner):
@@ -280,6 +296,7 @@ class T5Conditioner(Conditioner):
 
         self.max_length = max_length
         self.enable_grad = enable_grad
+        self.device = 'cpu'
 
         # Suppress logging from transformers
         previous_level = logging.root.manager.disable
@@ -299,10 +316,12 @@ class T5Conditioner(Conditioner):
         else:
             self.__dict__["model"] = model
 
-    def forward(self, texts: tp.List[str], device: tp.Union[torch.device, str]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
-
+    def set_device(self, device):
+        self.to(device)
         self.model.to(device)
-        self.proj_out.to(device)
+        self.device = device
+
+    def forward(self, texts: tp.List[str]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
 
         encoded = self.tokenizer(
             texts,
@@ -312,18 +331,16 @@ class T5Conditioner(Conditioner):
             return_tensors="pt",
         )
 
-        input_ids = encoded["input_ids"].to(device)
-        attention_mask = encoded["attention_mask"].to(device).to(torch.bool)
+        input_ids = encoded["input_ids"].to(self.device)
+        attention_mask = encoded["attention_mask"].to(self.device).to(torch.bool)
 
         self.model.eval()
-
         with torch.cuda.amp.autocast(dtype=torch.float16) and torch.set_grad_enabled(self.enable_grad):
             embeddings = self.model(
                 input_ids=input_ids, attention_mask=attention_mask
             )["last_hidden_state"]
 
         embeddings = self.proj_out(embeddings.float())
-
         embeddings = embeddings * attention_mask.unsqueeze(-1).float()
 
         return embeddings, attention_mask
@@ -356,11 +373,15 @@ class PhonemeConditioner(Conditioner):
 
         # Reserving 0 for padding, 1 for ignored
         self.phoneme_embedder = nn.Embedding(len(self.g2p.phonemes) + 2, output_dim)
+        self.device = next(self.phoneme_embedder.parameters()).device
 
-    def forward(self, texts: tp.List[str], device: tp.Union[torch.device, str]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
+    def set_device(self, device):
+        self.to(device)
+        self.device = device
 
-        self.phoneme_embedder.to(device)
-        self.proj_out.to(device)
+    def forward(self, texts: tp.List[str]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
+        # Update self.device
+        self.device = next(self.phoneme_embedder.parameters()).device
 
         batch_phonemes = [self.g2p(text) for text in texts]  # shape [batch_size, length]
 
@@ -375,15 +396,13 @@ class PhonemeConditioner(Conditioner):
         # Pad to match longest and make a mask tensor for the padding
         longest = max([len(ids) for ids in phoneme_ids])
         phoneme_ids = [ids + [0] * (longest - len(ids)) for ids in phoneme_ids]
-
-        phoneme_ids = torch.tensor(phoneme_ids).to(device)
+        phoneme_ids = torch.tensor(phoneme_ids).to(self.device)
 
         # Convert to embeddings
         phoneme_embeds = self.phoneme_embedder(phoneme_ids)
-
         phoneme_embeds = self.proj_out(phoneme_embeds)
 
-        return phoneme_embeds, torch.ones(phoneme_embeds.shape[0], phoneme_embeds.shape[1]).to(device)
+        return phoneme_embeds, torch.ones(phoneme_embeds.shape[0], phoneme_embeds.shape[1]).to(self.device)
 
 
 class TokenizerLUTConditioner(Conditioner):
@@ -421,9 +440,15 @@ class TokenizerLUTConditioner(Conditioner):
         self.max_length = max_length
 
         self.token_embedder = nn.Embedding(len(self.tokenizer), output_dim)
+        self.device = next(self.token_embedder.parameters()).device
 
-    def forward(self, texts: tp.List[str], device: tp.Union[torch.device, str]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
-        self.proj_out.to(device)
+    def set_device(self, device):
+        self.to(device)
+        self.device = device
+
+    def forward(self, texts: tp.List[str]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
+        # Update self.device
+        self.device = next(self.token_embedder.parameters()).device
 
         encoded = self.tokenizer(
             texts,
@@ -433,13 +458,11 @@ class TokenizerLUTConditioner(Conditioner):
             return_tensors="pt",
         )
 
-        input_ids = encoded["input_ids"].to(device)
-        attention_mask = encoded["attention_mask"].to(device).to(torch.bool)
+        input_ids = encoded["input_ids"].to(self.device)
+        attention_mask = encoded["attention_mask"].to(self.device).to(torch.bool)
 
         embeddings = self.token_embedder(input_ids)
-
         embeddings = self.proj_out(embeddings)
-
         embeddings = embeddings * attention_mask.unsqueeze(-1).float()
 
         return embeddings, attention_mask
@@ -456,13 +479,17 @@ class PretransformConditioner(Conditioner):
 
     def __init__(self, pretransform: Pretransform, output_dim: int):
         super().__init__(pretransform.encoded_channels, output_dim)
-
         self.pretransform = pretransform
+        self.device = 'cuda'
 
-    def forward(self, audio: tp.Union[torch.Tensor, tp.List[torch.Tensor], tp.Tuple[torch.Tensor]], device: tp.Union[torch.device, str]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
-
+    def set_device(self, device):
         self.pretransform.to(device)
-        self.proj_out.to(device)
+        self.device = device
+
+    def forward(
+        self,
+        audio: tp.Union[torch.Tensor, tp.List[torch.Tensor], tp.Tuple[torch.Tensor]],
+    ) -> tp.Tuple[torch.Tensor, torch.Tensor]:
 
         if isinstance(audio, list) or isinstance(audio, tuple):
             audio = torch.cat(audio, dim=0)
@@ -471,10 +498,9 @@ class PretransformConditioner(Conditioner):
         audio = set_audio_channels(audio, self.pretransform.io_channels)
 
         latents = self.pretransform.encode(audio)
-
         latents = self.proj_out(latents)
 
-        return [latents, torch.ones(latents.shape[0], latents.shape[2]).to(latents.device)]
+        return [latents, torch.ones(latents.shape[0], latents.shape[2]).to(self.device)]
 
 
 class MultiConditioner(nn.Module):
@@ -492,29 +518,33 @@ class MultiConditioner(nn.Module):
         self.conditioners = nn.ModuleDict(conditioners)
         self.default_keys = default_keys
 
-    def forward(self, batch_metadata: tp.List[tp.Dict[str, tp.Any]], device: tp.Union[torch.device, str]) -> tp.Dict[str, tp.Any]:
-        output = {}
+    def set_device(self, device):
+        for mod in self.conditioners.values():
+            mod.set_device(device)
 
+    def forward(self, batch_metadata: tp.List[tp.Dict[str, tp.Any]]) -> tp.Dict[str, tp.Any]:
+        # device = next(self.parameters()).device
+
+        output = {}
         for key, conditioner in self.conditioners.items():
             condition_key = key
-
             conditioner_inputs = []
 
             for x in batch_metadata:
-
                 if condition_key not in x:
                     if condition_key in self.default_keys:
                         condition_key = self.default_keys[condition_key]
                     else:
                         raise ValueError(f"Conditioner key {condition_key} not found in batch metadata")
 
-                # Unwrap the condition info if it's a single-element list or tuple, this is to support collation functions that wrap everything in a list
+                # Unwrap the condition info if it's a single-element list or tuple,
+                # this is to support collation functions that wrap everything in a list
                 if isinstance(x[condition_key], list) or isinstance(x[condition_key], tuple) and len(x[condition_key]) == 1:
                     conditioner_inputs.append(x[condition_key][0])
                 else:
                     conditioner_inputs.append(x[condition_key])
 
-            output[key] = conditioner(conditioner_inputs, device)
+            output[key] = conditioner(conditioner_inputs)
 
         return output
 
@@ -525,7 +555,6 @@ def create_multi_conditioner_from_conditioning_config(config: tp.Dict[str, tp.An
 
     Args:
         config: the conditioning config dictionary
-        device: the device to put the conditioners on
     """
     conditioners = {}
     cond_dim = config["cond_dim"]

@@ -1,37 +1,47 @@
-import torch
-import math
-from tqdm import trange
 
+import math
+
+import torch
 import k_diffusion as K
 
-# Define the noise schedule and sampling loop
+from stable_audio_tools.utils.torch_common import print_once
+
+
 def get_alphas_sigmas(t):
     """Returns the scaling factors for the clean image (alpha) and for the
     noise (sigma), given a timestep."""
     return torch.cos(t * math.pi / 2), torch.sin(t * math.pi / 2)
+
 
 def alpha_sigma_to_t(alpha, sigma):
     """Returns a timestep, given the scaling factors for the clean image and for
     the noise."""
     return torch.atan2(sigma, alpha) / math.pi * 2
 
+
 def t_to_alpha_sigma(t):
     """Returns the scaling factors for the clean image and for the noise, given
     a timestep."""
     return torch.cos(t * math.pi / 2), torch.sin(t * math.pi / 2)
 
+
 @torch.no_grad()
-def sample(model, x, steps, eta, **extra_args):
+def sample(model, x, steps, eta, verbose: bool = True, **extra_args):
     """Draws samples from a model given starting noise. v-diffusion"""
     ts = x.new_ones([x.shape[0]])
 
     # Create the noise schedule
     t = torch.linspace(1, 0, steps + 1)[:-1]
-
     alphas, sigmas = get_alphas_sigmas(t)
 
+    if verbose:
+        itv = 10
+        t_s = torch.cuda.Event(enable_timing=True)
+        t_e = torch.cuda.Event(enable_timing=True)
+        t_s.record()
+
     # The sampling loop
-    for i in trange(steps):
+    for i in range(steps):
 
         # Get the model output (v, the predicted velocity)
         with torch.cuda.amp.autocast():
@@ -58,16 +68,26 @@ def sample(model, x, steps, eta, **extra_args):
             if eta:
                 x += torch.randn_like(x) * ddim_sigma
 
+        if verbose and (i + 1) % itv == 0:
+            t_e.record()
+            torch.cuda.synchronize()
+            proc_time = t_s.elapsed_time(t_e) / 1000.
+            print_once(f"{i + 1}\t / {steps}  [{itv / proc_time:.2f} iter/sec]")
+            t_s.record()
+
     # If we are on the last timestep, output the denoised image
     return pred
 
 # Soft mask inpainting is just shrinking hard (binary) mask inpainting
 # Given a float-valued soft mask (values between 0 and 1), get the binary mask for this particular step
+
+
 def get_bmask(i, steps, mask):
-    strength = (i+1)/(steps)
+    strength = (i + 1) / (steps)
     # convert to binary mask
-    bmask = torch.where(mask<=strength,1,0)
+    bmask = torch.where(mask <= strength, 1, 0)
     return bmask
+
 
 def make_cond_model_fn(model, cond_fn):
     def cond_model_fn(x, sigma, **kwargs):
@@ -82,22 +102,24 @@ def make_cond_model_fn(model, cond_fn):
 # Uses k-diffusion from https://github.com/crowsonkb/k-diffusion
 # init_data is init_audio as latents (if this is latent diffusion)
 # For sampling, set both init_data and mask to None
-# For variations, set init_data 
-# For inpainting, set both init_data & mask 
+# For variations, set init_data
+# For inpainting, set both init_data & mask
+
+
 def sample_k(
-        model_fn, 
-        noise, 
-        init_data=None,
-        mask=None,
-        steps=100, 
-        sampler_type="dpmpp-2m-sde", 
-        sigma_min=0.5, 
-        sigma_max=50, 
-        rho=1.0, device="cuda", 
-        callback=None, 
-        cond_fn=None,
-        **extra_args
-    ):
+    model_fn,
+    noise,
+    init_data=None,
+    mask=None,
+    steps=100,
+    sampler_type="dpmpp-2m-sde",
+    sigma_min=0.5,
+    sigma_max=50,
+    rho=1.0, device="cuda",
+    callback=None,
+    cond_fn=None,
+    **extra_args
+):
 
     denoiser = K.external.VDenoiser(model_fn)
 
@@ -106,7 +128,7 @@ def sample_k(
 
     # Make the list of sigmas. Sigma values are scalars related to the amount of noise each denoising step has
     sigmas = K.sampling.get_sigmas_polyexponential(steps, sigma_min, sigma_max, rho, device=device)
-    # Scale the initial noise by sigma 
+    # Scale the initial noise by sigma
     noise = noise * sigmas[0]
 
     wrapped_callback = callback
@@ -114,41 +136,41 @@ def sample_k(
     if mask is None and init_data is not None:
         # VARIATION (no inpainting)
         # set the initial latent to the init_data, and noise it with initial sigma
-        x = init_data + noise 
+        x = init_data + noise
     elif mask is not None and init_data is not None:
         # INPAINTING
         bmask = get_bmask(0, steps, mask)
         # initial noising
         input_noised = init_data + noise
         # set the initial latent to a mix of init_data and noise, based on step 0's binary mask
-        x = input_noised * bmask + noise * (1-bmask)
+        x = input_noised * bmask + noise * (1 - bmask)
         # define the inpainting callback function (Note: side effects, it mutates x)
         # See https://github.com/crowsonkb/k-diffusion/blob/master/k_diffusion/sampling.py#L596C13-L596C105
         # callback({'x': x, 'i': i, 'sigma': sigmas[i], 'sigma_hat': sigmas[i], 'denoised': denoised})
         # This is called immediately after `denoised = model(x, sigmas[i] * s_in, **extra_args)`
+
         def inpainting_callback(args):
             i = args["i"]
             x = args["x"]
             sigma = args["sigma"]
-            #denoised = args["denoised"]
+            # denoised = args["denoised"]
             # noise the init_data input with this step's appropriate amount of noise
             input_noised = init_data + torch.randn_like(init_data) * sigma
             # shrinking hard mask
             bmask = get_bmask(i, steps, mask)
             # mix input_noise with x, using binary mask
-            new_x = input_noised * bmask + x * (1-bmask)
+            new_x = input_noised * bmask + x * (1 - bmask)
             # mutate x
-            x[:,:,:] = new_x[:,:,:]
-        # wrap together the inpainting callback and the user-submitted callback. 
-        if callback is None: 
+            x[:, :, :] = new_x[:, :, :]
+        # wrap together the inpainting callback and the user-submitted callback.
+        if callback is None:
             wrapped_callback = inpainting_callback
         else:
-            wrapped_callback = lambda args: (inpainting_callback(args), callback(args))
+            def wrapped_callback(args): return (inpainting_callback(args), callback(args))
     else:
         # SAMPLING
         # set the initial latent to noise
         x = noise
-
 
     with torch.cuda.amp.autocast():
         if sampler_type == "k-heun":
@@ -160,11 +182,12 @@ def sample_k(
         elif sampler_type == "k-dpm-2":
             return K.sampling.sample_dpm_2(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "k-dpm-fast":
-            return K.sampling.sample_dpm_fast(denoiser, x, sigma_min, sigma_max, steps, disable=False, callback=wrapped_callback, extra_args=extra_args)
+            return K.sampling.sample_dpm_fast(
+                denoiser, x, sigma_min, sigma_max, steps, disable=False, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "k-dpm-adaptive":
-            return K.sampling.sample_dpm_adaptive(denoiser, x, sigma_min, sigma_max, rtol=0.01, atol=0.01, disable=False, callback=wrapped_callback, extra_args=extra_args)
+            return K.sampling.sample_dpm_adaptive(
+                denoiser, x, sigma_min, sigma_max, rtol=0.01, atol=0.01, disable=False, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "dpmpp-2m-sde":
             return K.sampling.sample_dpmpp_2m_sde(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "dpmpp-3m-sde":
             return K.sampling.sample_dpmpp_3m_sde(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
-

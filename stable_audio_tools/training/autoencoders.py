@@ -11,13 +11,14 @@ from ema_pytorch import EMA
 import auraloss
 import pytorch_lightning as pl
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
-from aeiou.viz import pca_point_cloud, audio_spectrogram_image, tokens_spectrogram_image
 
 from ..models.autoencoders import AudioAutoencoder
 from ..models.discriminators import EncodecDiscriminator, OobleckDiscriminator, DACGANLoss
 from ..models.bottleneck import VAEBottleneck, RVQBottleneck, DACRVQBottleneck, DACRVQVAEBottleneck, RVQVAEBottleneck, WassersteinBottleneck
 from .losses import MultiLoss, AuralossLoss, ValueLoss, L1Loss
 from .scheduler import create_optimizer_from_config, create_scheduler_from_config
+from .logging import MetricsLogger
+from .viz import audio_spectrogram_image, tokens_spectrogram_image, pca_point_cloud
 
 
 class AutoencoderTrainingWrapper(pl.LightningModule):
@@ -34,7 +35,8 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         ema_copy=None,
         force_input_mono: bool = False,
         latent_mask_ratio: float = 0.0,
-        teacher_model: tp.Optional[AudioAutoencoder] = None
+        teacher_model: tp.Optional[AudioAutoencoder] = None,
+        logging_config: dict = {}
     ):
         super().__init__()
 
@@ -51,6 +53,9 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
         self.optimizer_configs = optimizer_configs
         self.loss_config = loss_config
+
+        self.log_every = logging_config.get("log_every", 1)
+        self.metrics_logger = MetricsLogger()
 
         # Spectral reconstruction loss
 
@@ -265,7 +270,10 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         for loss_name, loss_value in losses.items():
             log_dict[f'train/{loss_name}'] = loss_value.detach()
 
-        self.log_dict(log_dict, prog_bar=True, on_step=True)
+        self.metrics_logger.add(log_dict)
+        if (self.global_step - 1) % self.log_every == 0:
+            log_dict = self.metrics_logger.pop()
+            self.log_dict(log_dict, prog_bar=True, on_step=True)
 
         return loss
 
@@ -335,7 +343,7 @@ class AutoencoderDemoCallback(pl.Callback):
             sample_dir = os.path.join(trainer.default_root_dir, 'samples')
             os.makedirs(sample_dir, exist_ok=True)
 
-            # Create reconstruction table
+            # Create audio table
             table_recon = wandb.Table(columns=['id', 'target', 'target (spec)', 'recon', 'recon (spec)'])
             for idx in range(max_num_sample):
                 target_audio = demo_reals[idx].to(torch.float32).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
@@ -362,7 +370,6 @@ class AutoencoderDemoCallback(pl.Callback):
 
             trainer.logger.experiment.log(log_dict)
         except Exception as e:
-            print(f'{type(e).__name__}: {e}')
             raise e
         finally:
             module.train()

@@ -7,7 +7,6 @@ from torch.nn import functional as F
 import torchaudio
 import pytorch_lightning as pl
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
-from aeiou.viz import audio_spectrogram_image
 from ema_pytorch import EMA
 from einops import rearrange
 from safetensors.torch import save_file
@@ -15,6 +14,7 @@ import wandb
 
 from ..models.lm import AudioLanguageModelWrapper
 from .scheduler import create_optimizer_from_config, create_scheduler_from_config
+from .viz import audio_spectrogram_image
 
 
 class AudioLanguageModelTrainingWrapper(pl.LightningModule):
