@@ -1,10 +1,9 @@
 import typing as tp
 
 import torch
-
-from einops import rearrange
 from torch import nn
 from torch.nn import functional as F
+from einops import rearrange
 from x_transformers import ContinuousTransformerWrapper, Encoder
 
 from .blocks import FourierFeatures

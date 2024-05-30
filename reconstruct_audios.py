@@ -16,7 +16,7 @@ from accelerate import Accelerator
 from stable_audio_tools.models import create_model_from_config
 from stable_audio_tools.models.autoencoders import AudioAutoencoder
 from stable_audio_tools.models.utils import load_ckpt_state_dict
-from stable_audio_tools.utils.torch_common import print_once, get_world_size, get_rank, count_parameters, copy_state_dict
+from stable_audio_tools.utils.torch_common import get_world_size, get_rank, count_parameters, copy_state_dict
 from stable_audio_tools.data.dataset import get_audio_filenames
 from stable_audio_tools.data.modification import Mono, Stereo
 
@@ -39,13 +39,13 @@ def load_audio(filename: str, sr: int):
 
 def get_args():
     args = argparse.ArgumentParser()
-    args.add_argument('--model-config', type=str)
-    args.add_argument('--ckpt-path', type=str)
-    args.add_argument('--audio-dir', type=str)
-    args.add_argument('--output-dir', type=str)
-    args.add_argument('--frame-duration', type=float)
-    args.add_argument('--overlap-rate', type=float)
-    args.add_argument('--batch-size', type=int)
+    args.add_argument('--model-config', type=str, help="Path to a model config file (json).")
+    args.add_argument('--ckpt-path', type=str, help="Path to a pretrained checkpoint file.")
+    args.add_argument('--audio-dir', type=str, help="A directory of audio files to be reconstructed.")
+    args.add_argument('--output-dir', type=str, help="A directory for saving reconstructed audios.")
+    args.add_argument('--frame-duration', type=float, default=1.0, help="Frame duration for processing in second.")
+    args.add_argument('--overlap-rate', type=float, default=0.01, help="Overlap rate of frame for crossfading.")
+    args.add_argument('--batch-size', type=int, default=20, help="Batch size of processing.")
     args = args.parse_args()
     return args
 

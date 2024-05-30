@@ -72,6 +72,8 @@ class DiffusionUncondTrainingWrapper(pl.LightningModule):
         if reals.ndim == 4 and reals.shape[0] == 1:
             reals = reals[0]
 
+        loss_info = {"audio_reals": reals}
+
         # Draw uniformly distributed continuous timesteps
         t = self.rng.draw(reals.shape[0])[:, 0].to(self.device)
 
@@ -79,11 +81,6 @@ class DiffusionUncondTrainingWrapper(pl.LightningModule):
         alphas, sigmas = get_alphas_sigmas(t)
 
         diffusion_input = reals
-
-        loss_info = {}
-
-        loss_info["audio_reals"] = diffusion_input
-
         if self.diffusion.pretransform is not None:
             with torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
                 diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
@@ -137,16 +134,18 @@ class DiffusionUncondTrainingWrapper(pl.LightningModule):
 class DiffusionUncondDemoCallback(pl.Callback):
     def __init__(
         self,
-        demo_every=2000,
-        num_demos=8,
-        demo_steps=250,
-        sample_rate=48000
+        demo_every: int = 2000,
+        num_demos: int = 8,
+        demo_steps: int = 250,
+        log_duration: float = 60.,  # [sec]
+        sample_rate: int = 48000
     ):
         super().__init__()
 
         self.demo_every = demo_every
         self.num_demos = num_demos
         self.demo_steps = demo_steps
+        self.log_duration = log_duration
         self.sample_rate = sample_rate
         self.last_demo_step = -1
 
@@ -174,21 +173,26 @@ class DiffusionUncondDemoCallback(pl.Callback):
                 if module.diffusion.pretransform is not None:
                     fakes = module.diffusion.pretransform.decode(fakes)
 
-            # Put the demos together
-            fakes = rearrange(fakes, 'b d n -> d (b n)')
+            sample_dir = os.path.join(trainer.default_root_dir, 'samples', f'{trainer.global_step:08}')
+            os.makedirs(sample_dir, exist_ok=True)
 
-            log_dict = {}
+            # Create audio table
+            log_length = int(self.sample_rate * self.log_duration)
+            table_audio = wandb.Table(columns=['id', 'sample', 'spec'])
+            for idx in range(fakes.shape[0]):
+                sample_audio = fakes[idx].to(torch.float32).div(torch.max(torch.abs(fakes[idx]))).mul(32767).to(torch.int16).cpu()
 
-            filename = f'demo_{trainer.global_step:08}.wav'
-            fakes = fakes.to(torch.float32).div(torch.max(torch.abs(fakes))).mul(32767).to(torch.int16).cpu()
-            torchaudio.save(filename, fakes, self.sample_rate)
+                # add audio row
+                table_audio.add_data(
+                    f'sample_{idx}',
+                    wandb.Audio(sample_audio[..., :log_length].numpy().T, sample_rate=self.sample_rate),
+                    wandb.Image(audio_spectrogram_image(sample_audio[..., :log_length]))
+                )
 
-            log_dict['demo'] = wandb.Audio(filename,
-                                           sample_rate=self.sample_rate,
-                                           caption='Reconstructed')
+                # save audio
+                torchaudio.save(f'{sample_dir}/sample_{idx + 1}.wav', sample_audio, self.sample_rate)
 
-            log_dict['demo_melspec_left'] = wandb.Image(audio_spectrogram_image(fakes))
-
+            log_dict = {'generated_samples': table_audio}
             trainer.logger.experiment.log(log_dict)
 
             del fakes
@@ -324,7 +328,7 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
         if reals.ndim == 4 and reals.shape[0] == 1:
             reals = reals[0]
 
-        loss_info = {"audio_reals", reals}
+        loss_info = {"audio_reals": reals}
 
         # Draw uniformly distributed continuous timesteps
         t = self.rng.draw(reals.shape[0])[:, 0].to(self.device)
@@ -452,11 +456,12 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
 class DiffusionCondDemoCallback(pl.Callback):
     def __init__(
         self,
-        demo_every=2000,
-        num_demos=8,
-        sample_size=65536,
-        demo_steps=250,
-        sample_rate=48000,
+        demo_every: int = 2000,
+        num_demos: int = 8,
+        sample_size: int = 65536,
+        demo_steps: int = 250,
+        log_duration: float = 60.,  # [sec]
+        sample_rate: int = 48000,
         demo_conditioning: tp.Optional[tp.Dict[str, tp.Any]] = {},
         demo_cfg_scales: tp.Optional[tp.List[int]] = [3, 5, 7],
         demo_cond_from_batch: bool = False,
@@ -468,6 +473,7 @@ class DiffusionCondDemoCallback(pl.Callback):
         self.num_demos = num_demos
         self.demo_samples = sample_size
         self.demo_steps = demo_steps
+        self.log_duration = log_duration
         self.sample_rate = sample_rate
         self.last_demo_step = -1
         self.demo_conditioning = demo_conditioning
@@ -524,7 +530,6 @@ class DiffusionCondDemoCallback(pl.Callback):
                 trainer.logger.experiment.log(log_dict)
 
             for cfg_scale in self.demo_cfg_scales:
-
                 print(f"[ CFG scale: {cfg_scale} ]")
 
                 with torch.cuda.amp.autocast():
@@ -543,6 +548,7 @@ class DiffusionCondDemoCallback(pl.Callback):
                 # fakes : (bs, ch, length)
 
                 # Create audio table
+                log_length = int(self.sample_rate * self.log_duration)
                 table_audio = wandb.Table(columns=['id', 'sample', 'spec'])
                 for idx in range(fakes.shape[0]):
                     sample_audio = fakes[idx].to(torch.float32).div(torch.max(torch.abs(fakes[idx]))).mul(32767).to(torch.int16).cpu()
@@ -550,8 +556,8 @@ class DiffusionCondDemoCallback(pl.Callback):
                     # add audio row
                     table_audio.add_data(
                         f'sample_{idx}',
-                        wandb.Audio(sample_audio.numpy().T, sample_rate=self.sample_rate),
-                        wandb.Image(audio_spectrogram_image(sample_audio))
+                        wandb.Audio(sample_audio[..., :log_length].numpy().T, sample_rate=self.sample_rate),
+                        wandb.Image(audio_spectrogram_image(sample_audio[..., :log_length]))
                     )
 
                     # save audio
@@ -851,11 +857,7 @@ class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
         self.rng = torch.quasirandom.SobolEngine(1, scramble=True)
 
         loss_modules = [
-            MSELoss("v",
-                    "targets",
-                    weight=1.0,
-                    name="mse_loss"
-                    )
+            MSELoss("v", "targets", weight=1.0, name="mse_loss")
         ]
 
         if model.bottleneck is not None:
@@ -907,9 +909,7 @@ class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
         if reals.ndim == 4 and reals.shape[0] == 1:
             reals = reals[0]
 
-        loss_info = {}
-
-        loss_info["audio_reals"] = reals
+        loss_info = {"audio_reals": reals}
 
         if self.diffae.pretransform is not None:
             with torch.no_grad():
@@ -1132,11 +1132,7 @@ class DiffusionPriorTrainingWrapper(pl.LightningModule):
         self.log_loss_info = log_loss_info
 
         loss_modules = [
-            MSELoss("v",
-                    "targets",
-                    weight=1.0,
-                    name="mse_loss"
-                    )
+            MSELoss("v", "targets", weight=1.0, name="mse_loss")
         ]
 
         self.use_reconstruction_loss = use_reconstruction_loss

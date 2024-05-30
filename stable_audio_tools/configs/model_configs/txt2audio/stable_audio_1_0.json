@@ -104,6 +104,7 @@
             "demo_every": 2000,
             "demo_steps": 250,
             "num_demos": 3,
+            "log_duration": 60.0,
             "demo_cond": [
                 {"prompt": "This is a dummy prompt", "seconds_start": 0, "seconds_total": 80},
                 {"prompt": "A cool 80s glam rock song with driving drums and distorted guitars", "seconds_start": 0, "seconds_total": 180},

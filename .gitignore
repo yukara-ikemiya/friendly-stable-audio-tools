@@ -167,3 +167,6 @@ runs/
 *.pt
 *.pth
 *.ckpt
+
+# Container
+*.sif
