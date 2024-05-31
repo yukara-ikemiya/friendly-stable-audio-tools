@@ -1,6 +1,7 @@
+
 import torch
-from safetensors.torch import load_file
 from torch.nn.utils import remove_weight_norm
+from safetensors.torch import load_file
 
 
 def load_ckpt_state_dict(ckpt_path):

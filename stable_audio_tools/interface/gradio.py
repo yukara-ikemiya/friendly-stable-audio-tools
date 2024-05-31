@@ -27,7 +27,7 @@ def load_model(model_config=None, model_ckpt_path=None, pretrained_name=None, pr
         model, model_config = get_pretrained_model(pretrained_name)
 
     elif model_config is not None and model_ckpt_path is not None:
-        print(f"Creating model from config")
+        print("Creating model from config")
         model = create_model_from_config(model_config)
 
         print(f"Loading model checkpoint from {model_ckpt_path}")
@@ -41,14 +41,14 @@ def load_model(model_config=None, model_ckpt_path=None, pretrained_name=None, pr
     if pretransform_ckpt_path is not None:
         print(f"Loading pretransform checkpoint from {pretransform_ckpt_path}")
         model.pretransform.load_state_dict(load_ckpt_state_dict(pretransform_ckpt_path), strict=False)
-        print(f"Done loading pretransform")
+        print("Done loading pretransform")
 
     model.to(device).eval().requires_grad_(False)
 
     if model_half:
         model.to(torch.float16)
 
-    print(f"Done loading model")
+    print("Done loading model")
 
     return model, model_config
 
@@ -302,9 +302,6 @@ def generate_lm(
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     gc.collect()
-
-    # Get the device from the model
-    device = next(model.parameters()).device
 
     audio = model.generate_audio(
         batch_size=batch_size,
@@ -641,8 +638,10 @@ def create_diffusion_prior_ui(model_config):
             sigma_min_slider = gr.Slider(minimum=0.0, maximum=2.0, step=0.01, value=0.03, label="Sigma min")
             sigma_max_slider = gr.Slider(minimum=0.0, maximum=200.0, step=0.1, value=80, label="Sigma max")
         process_button = gr.Button("Process", variant='primary', scale=1)
-        process_button.click(fn=diffusion_prior_process, inputs=[
-                             input_audio, steps_slider, sampler_type_dropdown, sigma_min_slider, sigma_max_slider], outputs=output_audio, api_name="process")
+        process_button.click(
+            fn=diffusion_prior_process,
+            inputs=[input_audio, steps_slider, sampler_type_dropdown, sigma_min_slider, sigma_max_slider],
+            outputs=output_audio, api_name="process")
 
     return ui
 
@@ -675,8 +674,8 @@ def create_lm_ui(model_config):
 
 def create_ui(model_config_path=None, ckpt_path=None, pretrained_name=None, pretransform_ckpt_path=None, model_half=False):
 
-    assert (pretrained_name is not None) ^ (
-        model_config_path is not None and ckpt_path is not None), "Must specify either pretrained name or provide a model config and checkpoint, but not both"
+    assert pretrained_name ^ (model_config_path and ckpt_path), \
+        "Must specify either pretrained name or provide a model config and checkpoint, but not both"
 
     if model_config_path is not None:
         # Load config from json file

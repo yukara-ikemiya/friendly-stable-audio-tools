@@ -3,7 +3,6 @@ import math
 
 import numpy as np
 import torch
-from torchaudio import transforms as T
 
 from .utils import prepare_audio
 from .sampling import sample_k

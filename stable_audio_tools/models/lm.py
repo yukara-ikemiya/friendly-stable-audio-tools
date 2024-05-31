@@ -1,9 +1,10 @@
 from dataclasses import dataclass
-import torch
-from tqdm.auto import trange
 import typing as tp
-from einops import rearrange
+
+import torch
 from torch import nn
+from tqdm.auto import trange
+from einops import rearrange
 
 from .conditioners import MultiConditioner, create_multi_conditioner_from_conditioning_config
 from .factory import create_pretransform_from_config

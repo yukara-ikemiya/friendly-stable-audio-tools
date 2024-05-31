@@ -1,11 +1,12 @@
 """The 1D discrete wavelet transform for PyTorch."""
 
-from einops import rearrange
-import pywt
+import typing as tp
+
 import torch
 from torch import nn
 from torch.nn import functional as F
-from typing import Literal
+from einops import rearrange
+import pywt
 
 
 def get_filter_bank(wavelet):
@@ -14,11 +15,14 @@ def get_filter_bank(wavelet):
         filt = filt[:, 1:]
     return filt
 
+
 class WaveletEncode1d(nn.Module):
-    def __init__(self, 
-                 channels, 
-                 levels,
-                 wavelet: Literal["bior2.2", "bior2.4", "bior2.6", "bior2.8", "bior4.4", "bior6.8"] = "bior4.4"):
+    def __init__(
+        self,
+        channels,
+        levels,
+        wavelet: tp.Literal["bior2.2", "bior2.4", "bior2.6", "bior2.8", "bior4.4", "bior6.8"] = "bior4.4"
+    ):
         super().__init__()
         self.wavelet = wavelet
         self.channels = channels
@@ -35,7 +39,7 @@ class WaveletEncode1d(nn.Module):
 
     def forward(self, x):
         for i in range(self.levels):
-            low, rest = x[:, : self.channels], x[:, self.channels :]
+            low, rest = x[:, : self.channels], x[:, self.channels:]
             pad = self.kernel.shape[-1] // 2
             low = F.pad(low, (pad, pad), "reflect")
             low = F.conv1d(low, self.kernel, stride=2)
@@ -47,10 +51,12 @@ class WaveletEncode1d(nn.Module):
 
 
 class WaveletDecode1d(nn.Module):
-    def __init__(self, 
-                 channels, 
-                 levels,
-                 wavelet: Literal["bior2.2", "bior2.4", "bior2.6", "bior2.8", "bior4.4", "bior6.8"] = "bior4.4"):
+    def __init__(
+        self,
+        channels,
+        levels,
+        wavelet: tp.Literal["bior2.2", "bior2.4", "bior2.6", "bior2.8", "bior4.4", "bior6.8"] = "bior4.4"
+    ):
         super().__init__()
         self.wavelet = wavelet
         self.channels = channels
@@ -66,7 +72,7 @@ class WaveletDecode1d(nn.Module):
 
     def forward(self, x):
         for i in range(self.levels):
-            low, rest = x[:, : self.channels * 2], x[:, self.channels * 2 :]
+            low, rest = x[:, : self.channels * 2], x[:, self.channels * 2:]
             pad = self.kernel.shape[-1] // 2 + 2
             low = rearrange(low, "n (l2 c) l -> n c (l l2)", l2=2)
             low = F.pad(low, (pad, pad), "reflect")
@@ -74,7 +80,7 @@ class WaveletDecode1d(nn.Module):
             low = F.conv_transpose1d(
                 low, self.kernel, stride=2, padding=self.kernel.shape[-1] // 2
             )
-            low = low[..., pad - 1 : -pad]
+            low = low[..., pad - 1: -pad]
             rest = rearrange(
                 rest, "n (c l2 c2) l -> n (c c2) (l l2)", l2=2, c2=self.channels
             )

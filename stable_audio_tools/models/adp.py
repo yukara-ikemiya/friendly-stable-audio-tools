@@ -5,7 +5,6 @@ import math
 from inspect import isfunction
 from math import ceil, floor, log, pi, log2
 import typing as tp
-from packaging import version
 
 import torch
 import torch.nn as nn
@@ -16,6 +15,7 @@ from torch import Tensor, einsum
 from torch.backends.cuda import sdp_kernel
 from torch.nn import functional as F
 from dac.nn.layers import Snake1d
+from packaging import version
 
 """
 Utils

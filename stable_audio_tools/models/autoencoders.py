@@ -43,14 +43,15 @@ def get_activation(activation: tp.Literal["elu", "snake", "none"], antialias=Fal
 
 
 class ResidualUnit(nn.Module):
-    def __init__(self, in_channels, out_channels, dilation, use_snake=False, antialias_activation=False):
+    def __init__(
+        self, in_channels: int, out_channels: int, dilation: int, use_snake: bool = False, antialias_activation: bool = False
+    ):
         super().__init__()
 
         self.dilation = dilation
+        padding = (dilation * (7 - 1)) // 2
 
         act = get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=out_channels)
-
-        padding = (dilation * (7 - 1)) // 2
 
         self.layers = nn.Sequential(
             act,
@@ -70,7 +71,7 @@ class ResidualUnit(nn.Module):
 
 
 class EncoderBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride, use_snake=False, antialias_activation=False):
+    def __init__(self, in_channels: int, out_channels: int, stride, use_snake: bool = False, antialias_activation: bool = False):
         super().__init__()
 
         act = get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=in_channels)
@@ -89,7 +90,10 @@ class EncoderBlock(nn.Module):
 
 
 class DecoderBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride, use_snake=False, antialias_activation=False, use_nearest_upsample=False):
+    def __init__(
+        self, in_channels: int, out_channels: int, stride: int,
+        use_snake: bool = False, antialias_activation: bool = False, use_nearest_upsample: bool = False
+    ):
         super().__init__()
 
         if use_nearest_upsample:
@@ -701,9 +705,7 @@ def create_encoder_from_config(encoder_config: tp.Dict[str, tp.Any]):
         seanet_encoder_config = encoder_config["config"]
         # SEANet encoder expects strides in reverse order
         seanet_encoder_config["ratios"] = list(reversed(seanet_encoder_config.get("ratios", [2, 2, 2, 2, 2])))
-        encoder = SEANetEncoder(
-            **seanet_encoder_config
-        )
+        encoder = SEANetEncoder(**seanet_encoder_config)
     elif encoder_type == "dac":
         dac_config = encoder_config["config"]
         encoder = DACEncoderWrapper(**dac_config)
@@ -726,27 +728,17 @@ def create_decoder_from_config(decoder_config: tp.Dict[str, tp.Any]):
     decoder_type = decoder_config["type"]
 
     if decoder_type == "oobleck":
-        decoder = OobleckDecoder(
-            **decoder_config["config"]
-        )
+        decoder = OobleckDecoder(**decoder_config["config"])
     elif decoder_type == "seanet":
         from encodec.modules import SEANetDecoder
-
-        decoder = SEANetDecoder(
-            **decoder_config["config"]
-        )
+        decoder = SEANetDecoder(**decoder_config["config"])
     elif decoder_type == "dac":
         dac_config = decoder_config["config"]
-
         decoder = DACDecoderWrapper(**dac_config)
     elif decoder_type == "local_attn":
         from .local_attention import TransformerDecoder1D
-
         local_attn_config = decoder_config["config"]
-
-        decoder = TransformerDecoder1D(
-            **local_attn_config
-        )
+        decoder = TransformerDecoder1D(**local_attn_config)
     else:
         raise ValueError(f"Unknown decoder type {decoder_type}")
 
@@ -773,7 +765,6 @@ def create_autoencoder_from_config(config: tp.Dict[str, tp.Any]):
 
     in_channels = ae_config.get("in_channels", None)
     out_channels = ae_config.get("out_channels", None)
-
     pretransform = ae_config.get("pretransform", None)
 
     if pretransform:

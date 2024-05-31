@@ -145,6 +145,7 @@ class RotaryEmbedding(nn.Module):
         if self.scale is None:
             return freqs, 1.
 
+        # TODO: fix this bug
         power = (torch.arange(seq_len, device=device) - (seq_len // 2)) / self.scale_base
         scale = self.scale ** rearrange(power, 'n -> n 1')
         scale = torch.cat((scale, scale), dim=-1)

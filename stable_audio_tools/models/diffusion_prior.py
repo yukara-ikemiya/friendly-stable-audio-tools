@@ -1,31 +1,34 @@
 from enum import Enum
 import typing as tp
 
-from .diffusion import ConditionedDiffusionModelWrapper
-from ..inference.generation import generate_diffusion_cond
-from ..inference.utils import prepare_audio
-
 import torch
 from torch.nn import functional as F
 from torchaudio import transforms as T
 
+from .diffusion import ConditionedDiffusionModelWrapper
+from ..inference.generation import generate_diffusion_cond
+
 # Define prior types enum
+
+
 class PriorType(Enum):
     MonoToStereo = 1
     SourceSeparation = 2
 
+
 class DiffusionPrior(ConditionedDiffusionModelWrapper):
-    def __init__(self, *args, prior_type: PriorType=None, **kwargs):
+    def __init__(self, *args, prior_type: PriorType = None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.prior_type = prior_type  
+        self.prior_type = prior_type
+
 
 class MonoToStereoDiffusionPrior(DiffusionPrior):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, prior_type=PriorType.MonoToStereo, **kwargs)
 
     def stereoize(
-        self, 
-        audio: torch.Tensor, # (batch, channels, time)
+        self,
+        audio: torch.Tensor,  # (batch, channels, time)
         in_sr: int,
         steps: int,
         sampler_kwargs: dict = {},
@@ -62,20 +65,20 @@ class MonoToStereoDiffusionPrior(DiffusionPrior):
         # Make audio mono, duplicate to stereo
         dual_mono = audio.mean(1, keepdim=True).repeat(1, 2, 1)
 
-        if self.pretransform is not None:
+        if self.pretransform:
             dual_mono = self.pretransform.encode(dual_mono)
 
         conditioning = {"source": [dual_mono]}
 
         stereo_audio = generate_diffusion_cond(
-            self, 
+            self,
             conditioning_tensors=conditioning,
             steps=steps,
             sample_size=padded_input_length,
             sample_rate=sample_rate,
             device=device,
             **sampler_kwargs,
-        ) 
+        )
 
         return stereo_audio
 
@@ -84,12 +87,13 @@ class SourceSeparationDiffusionPrior(DiffusionPrior):
     """
     A diffusion prior model made for conditioned source separation
     """
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, prior_type=PriorType.SourceSeparation, **kwargs)
 
     def separate(
-        self, 
-        mixed_audio: torch.Tensor, # (batch, channels, time)
+        self,
+        mixed_audio: torch.Tensor,  # (batch, channels, time)
         in_sr: int,
         steps: int,
         conditioning: dict = None,
@@ -109,7 +113,6 @@ class SourceSeparationDiffusionPrior(DiffusionPrior):
         """
 
         device = mixed_audio.device
-
         sample_rate = self.sample_rate
 
         # Resample input audio if necessary
@@ -127,25 +130,25 @@ class SourceSeparationDiffusionPrior(DiffusionPrior):
         if padded_input_length > audio_length:
             mixed_audio = F.pad(mixed_audio, (0, padded_input_length - audio_length))
 
-        if self.pretransform is not None:
+        if self.pretransform:
             mixed_audio = self.pretransform.encode(mixed_audio)
 
         # Conditioning
-        assert conditioning is not None or conditioning_tensors is not None, "Must provide either conditioning or conditioning_tensors for conditioned source separation"
+        assert conditioning or conditioning_tensors, "Must provide either conditioning or conditioning_tensors for conditioned source separation"
         if conditioning_tensors is None:
             conditioning_tensors = self.conditioner(conditioning, device)
-        
+
         # Pass in the mixture audio as conditioning
         conditioning_tensors["source"] = [mixed_audio]
 
         stereo_audio = generate_diffusion_cond(
-            self, 
+            self,
             conditioning_tensors=conditioning_tensors,
             steps=steps,
             sample_size=padded_input_length,
             sample_rate=sample_rate,
             device=device,
             **sampler_kwargs,
-        ) 
+        )
 
         return stereo_audio
