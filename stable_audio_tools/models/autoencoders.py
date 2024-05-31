@@ -1,6 +1,6 @@
 from contextlib import nullcontext
 import math
-from typing import Literal, Dict, Any, Optional
+import typing as tp
 
 import numpy as np
 import torch
@@ -26,7 +26,7 @@ def checkpoint(function, *args, **kwargs):
     return torch.utils.checkpoint.checkpoint(function, *args, **kwargs)
 
 
-def get_activation(activation: Literal["elu", "snake", "none"], antialias=False, channels=None) -> nn.Module:
+def get_activation(activation: tp.Literal["elu", "snake", "none"], antialias=False, channels=None) -> nn.Module:
     if activation == "elu":
         act = nn.ELU()
     elif activation == "snake":
@@ -54,11 +54,9 @@ class ResidualUnit(nn.Module):
 
         self.layers = nn.Sequential(
             act,
-            WNConv1d(in_channels=in_channels, out_channels=out_channels,
-                     kernel_size=7, dilation=dilation, padding=padding),
+            WNConv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=7, dilation=dilation, padding=padding),
             act,
-            WNConv1d(in_channels=out_channels, out_channels=out_channels,
-                     kernel_size=1)
+            WNConv1d(in_channels=out_channels, out_channels=out_channels, kernel_size=1)
         )
 
     def forward(self, x):
@@ -78,12 +76,9 @@ class EncoderBlock(nn.Module):
         act = get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=in_channels)
 
         self.layers = nn.Sequential(
-            ResidualUnit(in_channels=in_channels,
-                         out_channels=in_channels, dilation=1, use_snake=use_snake),
-            ResidualUnit(in_channels=in_channels,
-                         out_channels=in_channels, dilation=3, use_snake=use_snake),
-            ResidualUnit(in_channels=in_channels,
-                         out_channels=in_channels, dilation=9, use_snake=use_snake),
+            ResidualUnit(in_channels=in_channels, out_channels=in_channels, dilation=1, use_snake=use_snake),
+            ResidualUnit(in_channels=in_channels, out_channels=in_channels, dilation=3, use_snake=use_snake),
+            ResidualUnit(in_channels=in_channels, out_channels=in_channels, dilation=9, use_snake=use_snake),
             act,
             WNConv1d(in_channels=in_channels, out_channels=out_channels,
                      kernel_size=2 * stride, stride=stride, padding=math.ceil(stride / 2)),
@@ -100,29 +95,23 @@ class DecoderBlock(nn.Module):
         if use_nearest_upsample:
             upsample_layer = nn.Sequential(
                 nn.Upsample(scale_factor=stride, mode="nearest"),
-                WNConv1d(in_channels=in_channels,
-                         out_channels=out_channels,
-                         kernel_size=2 * stride,
-                         stride=1,
-                         bias=False,
-                         padding='same')
+                WNConv1d(in_channels=in_channels, out_channels=out_channels,
+                         kernel_size=2 * stride, stride=1, bias=False, padding='same')
             )
         else:
-            upsample_layer = WNConvTranspose1d(in_channels=in_channels,
-                                               out_channels=out_channels,
-                                               kernel_size=2 * stride, stride=stride, padding=math.ceil(stride / 2))
+            upsample_layer = WNConvTranspose1d(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                kernel_size=2 * stride, stride=stride, padding=math.ceil(stride / 2))
 
         act = get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=in_channels)
 
         self.layers = nn.Sequential(
             act,
             upsample_layer,
-            ResidualUnit(in_channels=out_channels, out_channels=out_channels,
-                         dilation=1, use_snake=use_snake),
-            ResidualUnit(in_channels=out_channels, out_channels=out_channels,
-                         dilation=3, use_snake=use_snake),
-            ResidualUnit(in_channels=out_channels, out_channels=out_channels,
-                         dilation=9, use_snake=use_snake),
+            ResidualUnit(in_channels=out_channels, out_channels=out_channels, dilation=1, use_snake=use_snake),
+            ResidualUnit(in_channels=out_channels, out_channels=out_channels, dilation=3, use_snake=use_snake),
+            ResidualUnit(in_channels=out_channels, out_channels=out_channels, dilation=9, use_snake=use_snake),
         )
 
     def forward(self, x):
@@ -130,19 +119,19 @@ class DecoderBlock(nn.Module):
 
 
 class OobleckEncoder(nn.Module):
-    def __init__(self,
-                 in_channels=2,
-                 channels=128,
-                 latent_dim=32,
-                 c_mults=[1, 2, 4, 8],
-                 strides=[2, 4, 8, 8],
-                 use_snake=False,
-                 antialias_activation=False
-                 ):
+    def __init__(
+        self,
+        in_channels: int = 2,
+        channels: int = 128,
+        latent_dim: int = 32,
+        c_mults: tp.List[int] = [1, 2, 4, 8],
+        strides: tp.List[int] = [2, 4, 8, 8],
+        use_snake: bool = False,
+        antialias_activation: bool = False
+    ):
         super().__init__()
 
         c_mults = [1] + c_mults
-
         self.depth = len(c_mults)
 
         layers = [
@@ -150,8 +139,10 @@ class OobleckEncoder(nn.Module):
         ]
 
         for i in range(self.depth - 1):
-            layers += [EncoderBlock(in_channels=c_mults[i] * channels, out_channels=c_mults[i + 1]
-                                    * channels, stride=strides[i], use_snake=use_snake)]
+            layers += [
+                EncoderBlock(in_channels=c_mults[i] * channels, out_channels=c_mults[i + 1] * channels,
+                             stride=strides[i], use_snake=use_snake)
+            ]
 
         layers += [
             get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=c_mults[-1] * channels),
@@ -165,20 +156,21 @@ class OobleckEncoder(nn.Module):
 
 
 class OobleckDecoder(nn.Module):
-    def __init__(self,
-                 out_channels=2,
-                 channels=128,
-                 latent_dim=32,
-                 c_mults=[1, 2, 4, 8],
-                 strides=[2, 4, 8, 8],
-                 use_snake=False,
-                 antialias_activation=False,
-                 use_nearest_upsample=False,
-                 final_tanh=True):
+    def __init__(
+        self,
+        out_channels: int = 2,
+        channels: int = 128,
+        latent_dim: int = 32,
+        c_mults: tp.List[int] = [1, 2, 4, 8],
+        strides: tp.List[int] = [2, 4, 8, 8],
+        use_snake: bool = False,
+        antialias_activation: bool = False,
+        use_nearest_upsample: bool = False,
+        final_tanh: bool = True
+    ):
         super().__init__()
 
         c_mults = [1] + c_mults
-
         self.depth = len(c_mults)
 
         layers = [
@@ -186,14 +178,10 @@ class OobleckDecoder(nn.Module):
         ]
 
         for i in range(self.depth - 1, 0, -1):
-            layers += [DecoderBlock(
-                in_channels=c_mults[i] * channels,
-                out_channels=c_mults[i - 1] * channels,
-                stride=strides[i - 1],
-                use_snake=use_snake,
-                antialias_activation=antialias_activation,
-                use_nearest_upsample=use_nearest_upsample
-            )
+            layers += [
+                DecoderBlock(in_channels=c_mults[i] * channels, out_channels=c_mults[i - 1] * channels,
+                             stride=strides[i - 1], use_snake=use_snake, antialias_activation=antialias_activation,
+                             use_nearest_upsample=use_nearest_upsample)
             ]
 
         layers += [
@@ -249,16 +237,16 @@ class DACDecoderWrapper(nn.Module):
 class AudioAutoencoder(nn.Module):
     def __init__(
         self,
-        encoder,
-        decoder,
+        encoder: nn.Module,
+        decoder: nn.Module,
         latent_dim: int,
         downsampling_ratio: int,
         sample_rate: int,
         io_channels: int = 2,
         bottleneck: Bottleneck = None,
         pretransform: Pretransform = None,
-        in_channels: Optional[int] = None,
-        out_channels: Optional[int] = None,
+        in_channels: tp.Optional[int] = None,
+        out_channels: tp.Optional[int] = None,
         soft_clip: bool = False
     ):
         super().__init__()
@@ -712,7 +700,7 @@ class DiffusionAutoencoder(AudioAutoencoder):
 # AE factories
 
 
-def create_encoder_from_config(encoder_config: Dict[str, Any]):
+def create_encoder_from_config(encoder_config: tp.Dict[str, tp.Any]):
     encoder_type = encoder_config.get("type", None)
     assert encoder_type is not None, "Encoder type must be specified"
 
@@ -744,7 +732,7 @@ def create_encoder_from_config(encoder_config: Dict[str, Any]):
     return encoder
 
 
-def create_decoder_from_config(decoder_config: Dict[str, Any]):
+def create_decoder_from_config(decoder_config: tp.Dict[str, tp.Any]):
     decoder_type = decoder_config.get("type", None)
     assert decoder_type is not None, "Decoder type must be specified"
 
@@ -781,7 +769,7 @@ def create_decoder_from_config(decoder_config: Dict[str, Any]):
     return decoder
 
 
-def create_autoencoder_from_config(config: Dict[str, Any]):
+def create_autoencoder_from_config(config: tp.Dict[str, tp.Any]):
 
     ae_config = config["model"]
 
@@ -826,7 +814,7 @@ def create_autoencoder_from_config(config: Dict[str, Any]):
     )
 
 
-def create_diffAE_from_config(config: Dict[str, Any]):
+def create_diffAE_from_config(config: tp.Dict[str, tp.Any]):
 
     diffae_config = config["model"]
 

@@ -17,3 +17,11 @@ def is_silence(audio: torch.Tensor, thresh: float = -60.):
         return 20 * torch.log10(torch.flatten(audio.abs()).max() + EPS).item()
 
     return get_dbmax(audio) < thresh
+
+
+def float_to_int16_audio(x: torch.Tensor, maximize: bool = False):
+    div = x.abs().max().item()
+    if not maximize:
+        div = max(div, 1.0)
+
+    return x.to(torch.float32).div(div).mul(32767).to(torch.int16).cpu()

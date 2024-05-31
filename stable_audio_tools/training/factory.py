@@ -207,7 +207,7 @@ def create_demo_callback_from_config(model_config, **kwargs):
             num_demos=demo_config["num_demos"],
             log_duration=demo_config.get("log_duration", 60.),
             demo_cfg_scales=demo_config["demo_cfg_scales"],
-            demo_conditioning=demo_config.get("demo_cond", {}),
+            demo_conditioning=demo_config.get("demo_cond", None),
             demo_cond_from_batch=demo_config.get("demo_cond_from_batch", False),
             display_audio_cond=demo_config.get("display_audio_cond", False),
         )

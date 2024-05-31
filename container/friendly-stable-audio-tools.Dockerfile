@@ -7,9 +7,9 @@ RUN apt-get update & \
     python -m pip install --upgrade pip
 
 # friendly-stable-audio-tools (latest main)
-RUN git clone https://github.com/Stability-AI/stable-audio-tools.git
-RUN cd stable-audio-tools && \
+RUN git clone https://github.com/yukara-ikemiya/friendly-stable-audio-tools.git
+RUN cd friendly-stable-audio-tools && \
     pip install .
 
-# To avoid accelerate import error
+# To avoid Accelerate import error
 RUN pip uninstall -y transformer-engine

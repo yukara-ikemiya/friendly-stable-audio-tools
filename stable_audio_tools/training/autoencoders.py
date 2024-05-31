@@ -14,7 +14,8 @@ from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
 from ..models.autoencoders import AudioAutoencoder
 from ..models.discriminators import EncodecDiscriminator, OobleckDiscriminator, DACGANLoss
-from ..models.bottleneck import VAEBottleneck, RVQBottleneck, DACRVQBottleneck, DACRVQVAEBottleneck, RVQVAEBottleneck, WassersteinBottleneck
+from ..models.bottleneck import (VAEBottleneck, RVQBottleneck, DACRVQBottleneck, DACRVQVAEBottleneck,
+                                 RVQVAEBottleneck, WassersteinBottleneck)
 from .losses import MultiLoss, AuralossLoss, ValueLoss, L1Loss
 from .scheduler import create_optimizer_from_config, create_scheduler_from_config
 from .logging import MetricsLogger
