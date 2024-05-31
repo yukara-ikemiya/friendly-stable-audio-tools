@@ -1,28 +1,28 @@
 from dataclasses import dataclass
-import torch
-from tqdm.auto import trange
 import typing as tp
-from einops import rearrange
-from torch import nn
 
-from .autoencoders import AudioAutoencoder
+import torch
+from torch import nn
+from tqdm.auto import trange
+from einops import rearrange
+
 from .conditioners import MultiConditioner, create_multi_conditioner_from_conditioning_config
 from .factory import create_pretransform_from_config
 from .lm_backbone import AudioLMBackbone, XTransformersAudioLMBackbone, ContinuousTransformerAudioLMBackbone
 from .pretransforms import Pretransform, AutoencoderPretransform, PretrainedDACPretransform, AudiocraftCompressionPretransform
 from .utils import multinomial, sample_top_k, sample_top_p
 
-from .codebooks_patterns import (
+from .codebook_patterns import (
     CodebooksPatternProvider,
     DelayedPatternProvider,
     MusicLMPattern,
     ParallelPatternProvider,
     UnrolledPatternProvider,
-    VALLEPattern,
 )
 
 # Copied and modified from https://github.com/facebookresearch/audiocraft/blob/main/audiocraft/models/lm.py under MIT license
 # License can be found in LICENSES/LICENSE_META.txt
+
 
 @dataclass
 class LMOutput:
@@ -33,14 +33,16 @@ class LMOutput:
 
 # Wrapper for a multi-codebook language model
 # Handles patterns and quantizer heads
+
+
 class AudioLanguageModel(nn.Module):
     def __init__(
-            self, 
-            pattern_provider: CodebooksPatternProvider, 
-            backbone: AudioLMBackbone,
-            num_quantizers: int,
-            codebook_size: int
-        ):
+        self,
+        pattern_provider: CodebooksPatternProvider,
+        backbone: AudioLMBackbone,
+        num_quantizers: int,
+        codebook_size: int
+    ):
         super().__init__()
 
         self.pattern_provider = pattern_provider
@@ -60,18 +62,18 @@ class AudioLanguageModel(nn.Module):
         ])
 
     def forward(self,
-            sequence: torch.Tensor, #[batch, seq_len, 
-            prepend_cond=None, #[batch, seq, channels]
-            prepend_cond_mask=None,
-            cross_attn_cond=None, #[batch, seq, channels],
-            **kwargs
-        ):
+                sequence: torch.Tensor,  # [batch, seq_len,
+                prepend_cond=None,  # [batch, seq, channels]
+                prepend_cond_mask=None,
+                cross_attn_cond=None,  # [batch, seq, channels],
+                **kwargs
+                ):
 
         batch, num_quantizers, seq_len = sequence.shape
 
         assert num_quantizers == self.num_quantizers, "Number of quantizers in sequence must match number of quantizers in model"
 
-        backbone_input = sum([self.embeds[i](sequence[:, i]) for i in range(num_quantizers)]) # [batch, seq_len, embed_dim]
+        backbone_input = sum([self.embeds[i](sequence[:, i]) for i in range(num_quantizers)])  # [batch, seq_len, embed_dim]
 
         output = self.backbone(
             backbone_input,
@@ -79,23 +81,24 @@ class AudioLanguageModel(nn.Module):
             prepend_cond=prepend_cond,
             prepend_cond_mask=prepend_cond_mask,
             **kwargs
-        ) # [batch, seq_len, embed_dim]
+        )  # [batch, seq_len, embed_dim]
 
         # Run output through quantizer heads
-        logits = torch.stack([self.quantizer_heads[i](output) for i in range(num_quantizers)], dim=1) # [batch, num_quantizers, seq_len, codebook_size]
+        logits = torch.stack([self.quantizer_heads[i](output) for i in range(num_quantizers)],
+                             dim=1)  # [batch, num_quantizers, seq_len, codebook_size]
 
         return logits
-    
+
     def compute_logits(
-            self, 
-            codes, #[batch, num_quantizers, seq_len]
+            self,
+            codes,  # [batch, num_quantizers, seq_len]
             **kwargs):
         """
         Compute logits for a batch of codes, optionally conditioning on cross-attention and prepend conditioning
         Handles translation between input sequence and pattern-shifted sequence
         Only used during training
         """
-        
+
         batch, _, seq_len = codes.shape
 
         pattern = self.pattern_provider.get_pattern(seq_len)
@@ -120,26 +123,28 @@ class AudioLanguageModel(nn.Module):
 
         logits = rearrange(logits, "b c n t -> b n t c")
 
-        logits_mask = logits_mask[None, :, :].expand(batch, -1, -1) # [batch, num_quantizers, seq_len]
+        logits_mask = logits_mask[None, :, :].expand(batch, -1, -1)  # [batch, num_quantizers, seq_len]
 
         return LMOutput(logits=logits, mask=logits_mask)
 
 # Conditioning and generation wrapper for a multi-codebook language model
 # Handles conditioning, CFG, generation, and encoding/decoding
+
+
 class AudioLanguageModelWrapper(nn.Module):
     def __init__(
-            self, 
-            pretransform: Pretransform,
-            lm: AudioLanguageModel,
-            sample_rate: int,
-            min_input_length: int,
-            conditioner: MultiConditioner = None,
-            cross_attn_cond_ids: tp.List[str] = [],
-            prepend_cond_ids: tp.List[str] = [],
-            global_cond_ids: tp.List[str] = []
-        ):
+        self,
+        pretransform: Pretransform,
+        lm: AudioLanguageModel,
+        sample_rate: int,
+        min_input_length: int,
+        conditioner: MultiConditioner = None,
+        cross_attn_cond_ids: tp.List[str] = [],
+        prepend_cond_ids: tp.List[str] = [],
+        global_cond_ids: tp.List[str] = []
+    ):
         super().__init__()
-        
+
         assert pretransform.is_discrete, "Pretransform must be discrete"
         self.pretransform = pretransform
 
@@ -168,7 +173,7 @@ class AudioLanguageModelWrapper(nn.Module):
         self.cross_attn_cond_ids = cross_attn_cond_ids
         self.prepend_cond_ids = prepend_cond_ids
         self.global_cond_ids = global_cond_ids
-    
+
     def get_conditioning_inputs(self, cond: tp.Dict[str, tp.Any], negative=False):
         cross_attention_input = None
         prepend_cond = None
@@ -207,14 +212,14 @@ class AudioLanguageModelWrapper(nn.Module):
                 "prepend_cond_mask": prepend_cond_mask,
                 "global_cond": global_cond
             }
-        
+
     def compute_logits(
-            self, 
-            codes, 
-            condition_tensors=None, 
-            cfg_dropout_prob=0.0,
-            **kwargs
-        ):
+        self,
+        codes,
+        condition_tensors=None,
+        cfg_dropout_prob=0.0,
+        **kwargs
+    ):
         """
         Compute logits for a batch of codes, and translates from conditioning inputs to model inputs
         Handles CFG dropout
@@ -233,9 +238,10 @@ class AudioLanguageModelWrapper(nn.Module):
         if cfg_dropout_prob > 0.0:
             if cross_attn_cond is not None:
                 null_embed = torch.zeros_like(cross_attn_cond, device=cross_attn_cond.device)
-                dropout_mask = torch.bernoulli(torch.full((cross_attn_cond.shape[0], 1, 1), cfg_dropout_prob, device=cross_attn_cond.device)).to(torch.bool)
+                dropout_mask = torch.bernoulli(torch.full(
+                    (cross_attn_cond.shape[0], 1, 1), cfg_dropout_prob, device=cross_attn_cond.device)).to(torch.bool)
                 cross_attn_cond = torch.where(dropout_mask, null_embed, cross_attn_cond)
-        
+
             if prepend_cond is not None:
                 null_embed = torch.zeros_like(prepend_cond, device=prepend_cond.device)
                 dropout_mask = torch.bernoulli(torch.full((prepend_cond.shape[0], 1, 1), cfg_dropout_prob, device=prepend_cond.device)).to(torch.bool)
@@ -246,21 +252,22 @@ class AudioLanguageModelWrapper(nn.Module):
                 dropout_mask = torch.bernoulli(torch.full((global_cond.shape[0], 1), cfg_dropout_prob, device=global_cond.device)).to(torch.bool)
                 global_cond = torch.where(dropout_mask, null_embed, global_cond)
 
-        return self.lm.compute_logits(codes, cross_attn_cond=cross_attn_cond, prepend_cond=prepend_cond, prepend_cond_mask=prepend_cond_mask, global_cond=global_cond, **kwargs)
-    
+        return self.lm.compute_logits(codes, cross_attn_cond=cross_attn_cond, prepend_cond=prepend_cond,
+                                      prepend_cond_mask=prepend_cond_mask, global_cond=global_cond, **kwargs)
+
     def _sample_next_token(
-            self, 
-            sequence, #[batch, num_quantizers, seq_len]
-            conditioning_tensors=None, 
-            cross_attn_use_cfg=True,
-            prepend_use_cfg=True,
-            global_use_cfg=True,
-            cfg_scale=1.0,
-            top_k=250,
-            top_p=0.0,
-            temp=1.0,
-            **kwargs
-        ):
+        self,
+        sequence,  # [batch, num_quantizers, seq_len]
+        conditioning_tensors=None,
+        cross_attn_use_cfg=True,
+        prepend_use_cfg=True,
+        global_use_cfg=True,
+        cfg_scale=1.0,
+        top_k=250,
+        top_p=0.0,
+        temp=1.0,
+        **kwargs
+    ):
         """
         Sample the next token for a batch of codes, and translates from conditioning inputs to model inputs
         Handles CFG inference
@@ -277,7 +284,7 @@ class AudioLanguageModelWrapper(nn.Module):
         global_cond = conditioning_inputs["global_cond"]
 
         if cfg_scale != 1.0:
-            
+
             # Batch size is doubled to account for negative samples
             sequence = torch.cat([sequence, sequence], dim=0)
 
@@ -285,11 +292,11 @@ class AudioLanguageModelWrapper(nn.Module):
                 null_embed = torch.zeros_like(cross_attn_cond, device=cross_attn_cond.device)
 
                 cross_attn_cond = torch.cat([cross_attn_cond, null_embed], dim=0)
-            
+
             if prepend_cond is not None and prepend_use_cfg:
                 null_embed = torch.zeros_like(prepend_cond, device=prepend_cond.device)
 
-                prepend_cond = torch.cat([prepend_cond, null_embed], dim=0) 
+                prepend_cond = torch.cat([prepend_cond, null_embed], dim=0)
 
                 if prepend_cond_mask is not None:
                     prepend_cond_mask = torch.cat([prepend_cond_mask, prepend_cond_mask], dim=0)
@@ -299,17 +306,18 @@ class AudioLanguageModelWrapper(nn.Module):
 
                 global_cond = torch.cat([global_cond, null_embed], dim=0)
 
-        logits = self.lm(sequence, cross_attn_cond=cross_attn_cond, prepend_cond=prepend_cond, prepend_cond_mask=prepend_cond_mask, global_cond=global_cond, **kwargs)
+        logits = self.lm(sequence, cross_attn_cond=cross_attn_cond, prepend_cond=prepend_cond,
+                         prepend_cond_mask=prepend_cond_mask, global_cond=global_cond, **kwargs)
 
         if cfg_scale != 1.0:
             cond_logits, uncond_logits = logits.chunk(2, dim=0)
 
             logits = uncond_logits + (cond_logits - uncond_logits) * cfg_scale
 
-        logits = rearrange(logits, "b n s c -> b n c s") # [batch, num_quantizers, codebook_size, seq_len]
-        
+        logits = rearrange(logits, "b n s c -> b n c s")  # [batch, num_quantizers, codebook_size, seq_len]
+
         # Grab the logits for the last step
-        logits = logits[:, :, :, -1] # [batch, num_quantizers, codebook_size]
+        logits = logits[:, :, :, -1]  # [batch, num_quantizers, codebook_size]
 
         # Apply top-k or top-p sampling
 
@@ -324,7 +332,7 @@ class AudioLanguageModelWrapper(nn.Module):
                 next_token = multinomial(probs, num_samples=1)
 
         else:
-            next_token = torch.argmax(logits, dim=-1, keepdim=True) # [batch, num_quantizers, 1]
+            next_token = torch.argmax(logits, dim=-1, keepdim=True)  # [batch, num_quantizers, 1]
 
         return next_token
 
@@ -363,7 +371,7 @@ class AudioLanguageModelWrapper(nn.Module):
         assert [x == possible_batch_sizes[0] for x in possible_batch_sizes], "Batch size must be consistent across inputs"
 
         batch_size = possible_batch_sizes[0]
-        
+
         if init_data is None:
             # Initialize with zeros
             assert batch_size > 0
@@ -380,9 +388,9 @@ class AudioLanguageModelWrapper(nn.Module):
 
         # Initialize the generated codes with the init data, padded with unknown tokens
         gen_codes = torch.full((batch_size, num_quantizers, max_gen_len), unknown_token, device=device, dtype=torch.long)
-        gen_codes[:, :, :start_offset] = init_data # [batch, num_quantizers, max_gen_len]
+        gen_codes[:, :, :start_offset] = init_data  # [batch, num_quantizers, max_gen_len]
 
-        gen_sequence, _, mask = pattern.build_pattern_sequence(gen_codes, self.lm.masked_token_id) # [batch, num_quantizers, gen_sequence_len]
+        gen_sequence, _, mask = pattern.build_pattern_sequence(gen_codes, self.lm.masked_token_id)  # [batch, num_quantizers, gen_sequence_len]
 
         start_offset_sequence = pattern.get_first_step_with_timesteps(start_offset)
         assert start_offset_sequence is not None
@@ -408,14 +416,14 @@ class AudioLanguageModelWrapper(nn.Module):
                 **kwargs
             )
 
-            valid_mask = mask[..., offset:offset+1].expand(batch_size, -1, -1)
+            valid_mask = mask[..., offset:offset + 1].expand(batch_size, -1, -1)
             next_token[~valid_mask] = self.lm.masked_token_id
 
             # Update the generated sequence with the next token
-            gen_sequence[..., offset:offset+1] = torch.where(
-                gen_sequence[..., offset:offset+1] == unknown_token,
-                next_token, 
-                gen_sequence[..., offset:offset+1]
+            gen_sequence[..., offset:offset + 1] = torch.where(
+                gen_sequence[..., offset:offset + 1] == unknown_token,
+                next_token,
+                gen_sequence[..., offset:offset + 1]
             )
 
             if use_cache and self.lm.backbone.use_generation_cache:
@@ -437,10 +445,9 @@ class AudioLanguageModelWrapper(nn.Module):
         assert (out_codes[..., :max_gen_len] != unknown_token).all()
         assert (out_mask[..., :max_gen_len] == 1).all()
 
-        #out_codes = out_codes[..., 0:max_gen_len]
+        # out_codes = out_codes[..., 0:max_gen_len]
 
         return out_codes
-    
 
     def generate_audio(
         self,
@@ -463,7 +470,7 @@ def create_audio_lm_from_config(config):
 
     sample_rate = config.get('sample_rate', None)
     assert sample_rate is not None, "Must specify sample_rate in config"
-    
+
     lm_config = model_config.get('lm', None)
     assert lm_config is not None, 'lm config must be specified in model config'
 
@@ -473,12 +480,11 @@ def create_audio_lm_from_config(config):
         'parallel': ParallelPatternProvider,
         'delay': DelayedPatternProvider,
         'unroll': UnrolledPatternProvider,
-        'valle': VALLEPattern,
         'musiclm': MusicLMPattern,
     }
 
     pretransform_config = model_config.get("pretransform", None)
-    
+
     pretransform = create_pretransform_from_config(pretransform_config, sample_rate)
 
     assert pretransform.is_discrete, "Pretransform must be discrete"

@@ -1,9 +1,8 @@
 import json
 
-def create_model_from_config(model_config):
-    model_type = model_config.get('model_type', None)
 
-    assert model_type is not None, 'model_type must be specified in model config'
+def create_model_from_config(model_config):
+    model_type = model_config['model_type']
 
     if model_type == 'autoencoder':
         from .autoencoders import create_autoencoder_from_config
@@ -17,25 +16,22 @@ def create_model_from_config(model_config):
     elif model_type == 'diffusion_autoencoder':
         from .autoencoders import create_diffAE_from_config
         return create_diffAE_from_config(model_config)
-    elif model_type == 'musicgen':
-        from .musicgen import create_musicgen_from_config
-        return create_musicgen_from_config(model_config)
     elif model_type == 'lm':
         from .lm import create_audio_lm_from_config
         return create_audio_lm_from_config(model_config)
     else:
         raise NotImplementedError(f'Unknown model type: {model_type}')
 
+
 def create_model_from_config_path(model_config_path):
     with open(model_config_path) as f:
         model_config = json.load(f)
-    
+
     return create_model_from_config(model_config)
 
-def create_pretransform_from_config(pretransform_config, sample_rate):
-    pretransform_type = pretransform_config.get('type', None)
 
-    assert pretransform_type is not None, 'type must be specified in pretransform config'
+def create_pretransform_from_config(pretransform_config, sample_rate):
+    pretransform_type = pretransform_config['type']
 
     if pretransform_type == 'autoencoder':
         from .autoencoders import create_autoencoder_from_config
@@ -76,7 +72,7 @@ def create_pretransform_from_config(pretransform_config, sample_rate):
         pretransform = AudiocraftCompressionPretransform(**audiocraft_config)
     else:
         raise NotImplementedError(f'Unknown pretransform type: {pretransform_type}')
-    
+
     enable_grad = pretransform_config.get('enable_grad', False)
     pretransform.enable_grad = enable_grad
 
@@ -84,10 +80,9 @@ def create_pretransform_from_config(pretransform_config, sample_rate):
 
     return pretransform
 
-def create_bottleneck_from_config(bottleneck_config):
-    bottleneck_type = bottleneck_config.get('type', None)
 
-    assert bottleneck_type is not None, 'type must be specified in bottleneck config'
+def create_bottleneck_from_config(bottleneck_config):
+    bottleneck_type = bottleneck_config['type']
 
     if bottleneck_type == 'tanh':
         from .bottleneck import TanhBottleneck
@@ -115,7 +110,7 @@ def create_bottleneck_from_config(bottleneck_config):
         from .bottleneck import DACRVQBottleneck
 
         return DACRVQBottleneck(**bottleneck_config["config"])
-    
+
     elif bottleneck_type == 'rvq_vae':
         from .bottleneck import RVQVAEBottleneck
 
@@ -132,7 +127,7 @@ def create_bottleneck_from_config(bottleneck_config):
         quantizer_params.update(bottleneck_config["config"])
 
         return RVQVAEBottleneck(**quantizer_params)
-        
+
     elif bottleneck_type == 'dac_rvq_vae':
         from .bottleneck import DACRVQVAEBottleneck
         return DACRVQVAEBottleneck(**bottleneck_config["config"])

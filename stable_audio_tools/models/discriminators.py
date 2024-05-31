@@ -1,17 +1,21 @@
+
+from functools import reduce
+import typing as tp
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-from functools import reduce
-import typing as tp
 from einops import rearrange
 from audiotools import AudioSignal, STFTParams
 from dac.model.discriminator import WNConv1d, WNConv2d
+
 
 def get_hinge_losses(score_real, score_fake):
     gen_loss = -score_fake.mean()
     dis_loss = torch.relu(1 - score_real).mean() + torch.relu(1 + score_fake).mean()
     return dis_loss, gen_loss
+
 
 class EncodecDiscriminator(nn.Module):
 
@@ -55,9 +59,11 @@ class EncodecDiscriminator(nn.Module):
 
 # Discriminators from oobleck
 
+
 IndividualDiscriminatorOut = tp.Tuple[torch.Tensor, tp.Sequence[torch.Tensor]]
 
 TensorDict = tp.Dict[str, torch.Tensor]
+
 
 class SharedDiscriminatorConvNet(nn.Module):
 
@@ -71,7 +77,7 @@ class SharedDiscriminatorConvNet(nn.Module):
         kernel_size: int = 15,
         stride: int = 4,
         activation: tp.Callable[[], nn.Module] = lambda: nn.SiLU(),
-        normalization: tp.Callable[[nn.Module], nn.Module] = torch.nn.utils.weight_norm,
+        normalization: tp.Callable[[nn.Module], nn.Module] = torch.nn.utils.parametrizations.weight_norm,
     ) -> None:
         super().__init__()
         channels = [in_size]
@@ -116,10 +122,7 @@ class SharedDiscriminatorConvNet(nn.Module):
 
 class MultiScaleDiscriminator(nn.Module):
 
-    def __init__(self,
-                in_channels: int,
-                n_scales: int,
-                **conv_kwargs) -> None:
+    def __init__(self, in_channels: int, n_scales: int, **conv_kwargs) -> None:
         super().__init__()
         layers = []
         for _ in range(n_scales):
@@ -134,14 +137,13 @@ class MultiScaleDiscriminator(nn.Module):
             score = score + s
             features.extend(f)
             x = nn.functional.avg_pool1d(x, 2)
+
         return score, features
+
 
 class MultiPeriodDiscriminator(nn.Module):
 
-    def __init__(self,
-                 in_channels: int,
-                 periods: tp.Sequence[int],
-                 **conv_kwargs) -> None:
+    def __init__(self, in_channels: int, periods: tp.Sequence[int], **conv_kwargs) -> None:
         super().__init__()
         layers = []
         self.periods = periods
@@ -236,13 +238,14 @@ class MultiDiscriminator(nn.Module):
         inputs.update(all_features)
 
         return inputs
-    
+
+
 class OobleckDiscriminator(nn.Module):
 
     def __init__(
-            self,
-            in_channels=1,
-            ):
+        self,
+        in_channels=1,
+    ):
         super().__init__()
 
         multi_scale_discriminator = MultiScaleDiscriminator(
@@ -265,7 +268,7 @@ class OobleckDiscriminator(nn.Module):
         # )
 
         self.multi_discriminator = MultiDiscriminator(
-            [multi_scale_discriminator, multi_period_discriminator], #, multi_resolution_discriminator],
+            [multi_scale_discriminator, multi_period_discriminator],  # , multi_resolution_discriminator],
             ["reals", "fakes"]
         )
 
@@ -284,7 +287,7 @@ class OobleckDiscriminator(nn.Module):
         features_fake = inputs["features_fakes"]
 
         dis_loss, gen_loss = get_hinge_losses(scores_real, scores_fake)
-         
+
         feature_matching_distance = torch.tensor(0.)
 
         for _, (scale_real, scale_fake) in enumerate(zip(features_real, features_fake)):
@@ -295,12 +298,12 @@ class OobleckDiscriminator(nn.Module):
                     scale_real,
                     scale_fake,
                 )) / len(scale_real)
-            
-        return dis_loss, gen_loss, feature_matching_distance
-    
 
-## Discriminators from Descript Audio Codec repo
-## Copied and modified under MIT license, see LICENSES/LICENSE_DESCRIPT.txt
+        return dis_loss, gen_loss, feature_matching_distance
+
+
+# Discriminators from Descript Audio Codec repo
+# Copied and modified under MIT license, see LICENSES/LICENSE_DESCRIPT.txt
 class MPD(nn.Module):
     def __init__(self, period, channels=1):
         super().__init__()
@@ -365,8 +368,8 @@ class MSD(nn.Module):
 
         fmap = []
 
-        for l in self.convs:
-            x = l(x)
+        for layer in self.convs:
+            x = layer(x)
             fmap.append(x)
         x = self.conv_post(x)
         fmap.append(x)
@@ -416,7 +419,8 @@ class MRD(nn.Module):
         self.bands = bands
 
         ch = 32
-        convs = lambda: nn.ModuleList(
+
+        def convs(): return nn.ModuleList(
             [
                 WNConv2d(2, ch, (3, 9), (1, 1), padding=(1, 4)),
                 WNConv2d(ch, ch, (3, 9), (1, 2), padding=(1, 4)),
@@ -433,7 +437,7 @@ class MRD(nn.Module):
         x = torch.view_as_real(x.stft())
         x = rearrange(x, "b ch f t c -> (b ch) c t f", ch=self.channels)
         # Split into bands
-        x_bands = [x[..., b[0] : b[1]] for b in self.bands]
+        x_bands = [x[..., b[0]: b[1]] for b in self.bands]
         return x_bands
 
     def forward(self, x):
@@ -499,6 +503,7 @@ class DACDiscriminator(nn.Module):
         fmaps = [d(x) for d in self.discriminators]
         return fmaps
 
+
 class DACGANLoss(nn.Module):
     """
     Computes a discriminator loss, given a discriminator on
@@ -538,7 +543,7 @@ class DACGANLoss(nn.Module):
             for j in range(len(d_fake[i]) - 1):
                 loss_feature += F.l1_loss(d_fake[i][j], d_real[i][j].detach())
         return loss_g, loss_feature
-    
+
     def loss(self, fake, real):
         gen_loss, feature_distance = self.generator_loss(fake, real)
         dis_loss = self.discriminator_loss(fake, real)

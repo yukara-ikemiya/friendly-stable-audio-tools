@@ -1,15 +1,15 @@
-from prefigure.prefigure import get_all_args, push_wandb_config
-import json
+
 import os
-import torch
+import json
+
 import pytorch_lightning as pl
-import random
+from prefigure.prefigure import get_all_args, push_wandb_config
 
 from stable_audio_tools.data.dataset import create_dataloader_from_config
 from stable_audio_tools.models import create_model_from_config
 from stable_audio_tools.models.utils import load_ckpt_state_dict, remove_weight_norm_from_model
-from stable_audio_tools.training import create_training_wrapper_from_config, create_demo_callback_from_config
-from stable_audio_tools.training.utils import copy_state_dict
+from stable_audio_tools.training import create_training_wrapper_from_config, create_demo_callback_from_config, create_tqdm_callback_from_config
+from stable_audio_tools.utils.torch_common import set_seed, copy_state_dict
 
 
 class ExceptionCallback(pl.Callback):
@@ -29,21 +29,19 @@ def main():
 
     args = get_all_args()
 
-    seed = args.seed
-
     # Set a different seed for each process if using SLURM
+    seed = args.seed
     if os.environ.get("SLURM_PROCID") is not None:
         seed += int(os.environ.get("SLURM_PROCID"))
 
-    random.seed(seed)
-    torch.manual_seed(seed)
+    set_seed(seed)
 
     # Get JSON config from args.model_config
     with open(args.model_config) as f:
-        model_config = json.load(f)
+        model_config: dict = json.load(f)
 
     with open(args.dataset_config) as f:
-        dataset_config = json.load(f)
+        dataset_config: dict = json.load(f)
 
     train_dl = create_dataloader_from_config(
         dataset_config,
@@ -51,18 +49,20 @@ def main():
         num_workers=args.num_workers,
         sample_rate=model_config["sample_rate"],
         sample_size=model_config["sample_size"],
-        audio_channels=model_config.get("audio_channels", 2),
+        audio_channels=model_config["audio_channels"]
     )
 
     model = create_model_from_config(model_config)
 
     if args.pretrained_ckpt_path:
+        print(f"->->-> Loading a pretrained checkpoint from {args.pretrained_ckpt_path}...")
         copy_state_dict(model, load_ckpt_state_dict(args.pretrained_ckpt_path))
 
     if args.remove_pretransform_weight_norm == "pre_load":
         remove_weight_norm_from_model(model.pretransform)
 
     if args.pretransform_ckpt_path:
+        print(f"->->-> Loading a pretransform checkpoint from {args.pretransform_ckpt_path}...")
         model.pretransform.load_state_dict(load_ckpt_state_dict(args.pretransform_ckpt_path))
 
     # Remove weight_norm from the pretransform if specified
@@ -83,10 +83,12 @@ def main():
         save_dir = None
         checkpoint_dir = None
 
-    ckpt_callback = pl.callbacks.ModelCheckpoint(every_n_train_steps=args.checkpoint_every, dirpath=checkpoint_dir, save_top_k=-1)
+    ckpt_config = model_config["training"].get("checkpoint", {"every_n_train_steps": 10000, "save_top_k": 1, "save_last": True})
+    ckpt_callback = pl.callbacks.ModelCheckpoint(**ckpt_config, dirpath=checkpoint_dir)
     save_model_config_callback = ModelConfigEmbedderCallback(model_config)
 
     demo_callback = create_demo_callback_from_config(model_config, demo_dl=train_dl)
+    tqdm_callback = create_tqdm_callback_from_config(model_config)
 
     # Combine args and config dicts
     args_dict = vars(args)
@@ -98,14 +100,15 @@ def main():
     if args.strategy:
         if args.strategy == "deepspeed":
             from pytorch_lightning.strategies import DeepSpeedStrategy
-            strategy = DeepSpeedStrategy(stage=2,
-                                         contiguous_gradients=True,
-                                         overlap_comm=True,
-                                         reduce_scatter=True,
-                                         reduce_bucket_size=5e8,
-                                         allgather_bucket_size=5e8,
-                                         load_full_weights=True
-                                         )
+            strategy = DeepSpeedStrategy(
+                stage=2,
+                contiguous_gradients=True,
+                overlap_comm=True,
+                reduce_scatter=True,
+                reduce_bucket_size=5e8,
+                allgather_bucket_size=5e8,
+                load_full_weights=True
+            )
         else:
             strategy = args.strategy
     else:
@@ -118,7 +121,7 @@ def main():
         strategy=strategy,
         precision=args.precision,
         accumulate_grad_batches=args.accum_batches,
-        callbacks=[ckpt_callback, demo_callback, exc_callback, save_model_config_callback],
+        callbacks=[ckpt_callback, demo_callback, tqdm_callback, exc_callback, save_model_config_callback],
         logger=wandb_logger,
         log_every_n_steps=1,
         max_epochs=10000000,

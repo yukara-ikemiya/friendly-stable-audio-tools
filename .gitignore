@@ -162,3 +162,11 @@ cython_debug/
 # Logs
 wandb/
 runs/
+
+# Checkpoints
+*.pt
+*.pth
+*.ckpt
+
+# Container
+*.sif

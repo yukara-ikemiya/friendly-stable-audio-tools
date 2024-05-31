@@ -1,15 +1,17 @@
+
 import torch
+from torch.nn.utils import remove_weight_norm
 from safetensors.torch import load_file
 
-from torch.nn.utils import remove_weight_norm
 
 def load_ckpt_state_dict(ckpt_path):
     if ckpt_path.endswith(".safetensors"):
         state_dict = load_file(ckpt_path)
     else:
         state_dict = torch.load(ckpt_path, map_location="cpu")["state_dict"]
-    
+
     return state_dict
+
 
 def remove_weight_norm_from_model(model):
     for module in model.modules():
@@ -21,6 +23,7 @@ def remove_weight_norm_from_model(model):
 
 # Sampling functions copied from https://github.com/facebookresearch/audiocraft/blob/main/audiocraft/utils/utils.py under MIT license
 # License can be found in LICENSES/LICENSE_META.txt
+
 
 def multinomial(input: torch.Tensor, num_samples: int, replacement=False, *, generator=None):
     """torch.multinomial with arbitrary number of dimensions, and number of candidates on the last dimension.

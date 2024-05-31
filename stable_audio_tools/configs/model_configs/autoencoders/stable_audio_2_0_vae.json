@@ -115,9 +115,21 @@
                 }
             }
         },
+        "logging":{
+            "log_every": 20
+        },
+        "checkpoint":{
+            "every_n_train_steps": 10000,
+            "save_top_k": 2,
+            "monitor": "train/mrstft_loss",
+            "save_last": true
+        },
         "demo": {
             "demo_every": 2000,
             "max_num_sample": 4
+        },
+        "tqdm": {
+            "refresh_rate": 100
         }
     }
 }

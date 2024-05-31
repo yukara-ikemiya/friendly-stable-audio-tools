@@ -1,14 +1,13 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='stable-audio-tools',
+    name='friendly-stable-audio-tools',
     version='0.0.15',
-    url='https://github.com/Stability-AI/stable-audio-tools.git',
-    author='Stability AI',
+    url='https://github.com/yukara-ikemiya/friendly-stable-audio-tools.git',
+    author='Yukara Ikemiya and Stability AI',
     description='Training and inference tools for generative audio models from Stability AI',
-    packages=find_packages(),  
+    packages=find_packages(),
     install_requires=[
-        'aeiou==0.0.20',
         'alias-free-torch==0.0.6',
         'auraloss==0.4.0',
         'descript-audio-codec==1.0.0',
@@ -25,7 +24,7 @@ setup(
         'pandas==2.0.2',
         'pedalboard==0.7.4',
         'prefigure==0.0.9',
-        'pytorch_lightning==2.1.0', 
+        'pytorch_lightning==2.1.0',
         'PyWavelets==1.4.1',
         'safetensors',
         'sentencepiece==0.1.99',
