@@ -10,7 +10,7 @@ originally by Stability AI.
 
 This repository contains the following additional features:
 - 🔥 Refactored codes of `stable-audio-tools` for improved readability and usability.
-- 🔥 Some useful scripts for evaluating and playing with your own trained models.
+- 🔥 Useful scripts for evaluating and playing with your own trained models.
 - 🔥 Instruction on how to train models such as `Stable Audio 2.0`.
 
 and does NOT contain:
@@ -19,7 +19,7 @@ and does NOT contain:
 # Requirements
 
 - PyTorch 2.0 or later for Flash Attention support
-- Development for the repo is done in Python 3.8.10
+- Development for the repo is done in Python 3.8.10 or later
 
 # Install
 
