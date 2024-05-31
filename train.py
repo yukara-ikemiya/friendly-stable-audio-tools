@@ -55,12 +55,14 @@ def main():
     model = create_model_from_config(model_config)
 
     if args.pretrained_ckpt_path:
+        print(f"->->-> Loading a pretrained checkpoint from {args.pretrained_ckpt_path}...")
         copy_state_dict(model, load_ckpt_state_dict(args.pretrained_ckpt_path))
 
     if args.remove_pretransform_weight_norm == "pre_load":
         remove_weight_norm_from_model(model.pretransform)
 
     if args.pretransform_ckpt_path:
+        print(f"->->-> Loading a pretransform checkpoint from {args.pretransform_ckpt_path}...")
         model.pretransform.load_state_dict(load_ckpt_state_dict(args.pretransform_ckpt_path))
 
     # Remove weight_norm from the pretransform if specified

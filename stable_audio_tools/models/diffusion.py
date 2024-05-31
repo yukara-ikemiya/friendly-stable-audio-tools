@@ -1,7 +1,6 @@
 
 from functools import partial
 import typing as tp
-from time import time
 
 import numpy as np
 import torch
@@ -44,7 +43,7 @@ class DiffusionModelWrapper(nn.Module):
 
         self.model = model
 
-        if pretransform is not None:
+        if pretransform:
             self.pretransform = pretransform
         else:
             self.pretransform = None
@@ -224,7 +223,7 @@ class UNetCFG1DWrapper(ConditionedDiffusionModel):
         **kwargs
     ):
         channels_list = None
-        if input_concat_cond is not None:
+        if input_concat_cond:
             channels_list = [input_concat_cond]
 
         outputs = self.model(
@@ -280,8 +279,7 @@ class UNet1DCondWrapper(ConditionedDiffusionModel):
         **kwargs
     ):
         channels_list = None
-        if input_concat_cond is not None:
-
+        if input_concat_cond:
             # Interpolate input_concat_cond to the same length as x
             if input_concat_cond.shape[2] != x.shape[2]:
                 input_concat_cond = F.interpolate(input_concat_cond, (x.shape[2], ), mode='nearest')
@@ -434,7 +432,7 @@ class DiffusionAttnUnet1D(nn.Module):
         timestep_embed = expand_to_planes(self.timestep_embed(t[:, None]), x.shape)
         inputs = [x, timestep_embed]
 
-        if cond is not None:
+        if cond:
             if cond.shape[2] != x.shape[2]:
                 cond = F.interpolate(cond, (x.shape[2], ), mode='linear', align_corners=False)
 
@@ -541,7 +539,7 @@ def create_diffusion_uncond_from_config(config: tp.Dict[str, tp.Any]):
     sample_rate = config.get["sample_rate"]
     min_input_length = 1
 
-    if pretransform is not None:
+    if pretransform:
         pretransform = create_pretransform_from_config(pretransform, sample_rate)
         min_input_length = pretransform.downsampling_ratio
 
@@ -581,16 +579,12 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
     else:
         raise NotImplementedError(f'Unknown model type: {diffusion_model_type}')
 
-    io_channels = model_config.get('io_channels', None)
-    assert io_channels is not None, "Must specify io_channels in model config"
-
-    sample_rate = config.get('sample_rate', None)
-    assert sample_rate is not None, "Must specify sample_rate in config"
-
+    io_channels = model_config['io_channels']
+    sample_rate = config['sample_rate']
     conditioning_config = model_config.get('conditioning', None)
 
     conditioner = None
-    if conditioning_config is not None:
+    if conditioning_config:
         conditioner = create_multi_conditioner_from_conditioning_config(conditioning_config)
 
     cross_attention_ids = diffusion_config.get('cross_attention_cond_ids', [])
@@ -600,7 +594,7 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
 
     pretransform = model_config.get("pretransform", None)
 
-    if pretransform is not None:
+    if pretransform:
         pretransform = create_pretransform_from_config(pretransform, sample_rate)
         min_input_length = pretransform.downsampling_ratio
     else:
@@ -616,8 +610,7 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
     if model_type == "diffusion_cond" or model_type == "diffusion_cond_inpaint":
         wrapper_fn = ConditionedDiffusionModelWrapper
     elif model_type == "diffusion_prior":
-        prior_type = model_config.get("prior_type", None)
-        assert prior_type is not None, "Must specify prior_type in diffusion prior model config"
+        prior_type = model_config["prior_type"]
 
         if prior_type == "mono_stereo":
             from .diffusion_prior import MonoToStereoDiffusionPrior

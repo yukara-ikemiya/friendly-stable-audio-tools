@@ -4,11 +4,8 @@ from ..models.factory import create_model_from_config
 
 
 def create_training_wrapper_from_config(model_config, model):
-    model_type = model_config.get('model_type', None)
-    assert model_type is not None, 'model_type must be specified in model config'
-
-    training_config = model_config.get('training', None)
-    assert training_config is not None, 'training config must be specified in model config'
+    model_type = model_config['model_type']
+    training_config = model_config['training']
 
     if model_type == 'autoencoder':
         from .autoencoders import AutoencoderTrainingWrapper
@@ -30,12 +27,12 @@ def create_training_wrapper_from_config(model_config, model):
         latent_mask_ratio = training_config.get("latent_mask_ratio", 0.0)
 
         teacher_model = training_config.get("teacher_model", None)
-        if teacher_model is not None:
+        if teacher_model:
             teacher_model = create_model_from_config(teacher_model)
             teacher_model = teacher_model.eval().requires_grad_(False)
 
             teacher_model_ckpt = training_config.get("teacher_model_ckpt", None)
-            if teacher_model_ckpt is not None:
+            if teacher_model_ckpt:
                 teacher_model.load_state_dict(torch.load(teacher_model_ckpt)["state_dict"])
             else:
                 raise ValueError("teacher_model_ckpt must be specified if teacher_model is specified")
@@ -153,11 +150,8 @@ def create_training_wrapper_from_config(model_config, model):
 
 
 def create_demo_callback_from_config(model_config, **kwargs):
-    model_type = model_config.get('model_type', None)
-    assert model_type is not None, 'model_type must be specified in model config'
-
-    training_config = model_config.get('training', None)
-    assert training_config is not None, 'training config must be specified in model config'
+    model_type = model_config['model_type']
+    training_config = model_config['training']
 
     demo_config = training_config.get("demo", {})
 
@@ -241,8 +235,7 @@ def create_demo_callback_from_config(model_config, **kwargs):
 
 def create_tqdm_callback_from_config(model_config, **kwargs):
     from pytorch_lightning.callbacks import TQDMProgressBar
-    training_config = model_config.get('training', None)
-    assert training_config is not None, 'training config must be specified in model config'
-
+    training_config = model_config['training']
     tqdm_config = training_config.get("tqdm", {})
+
     return TQDMProgressBar(**tqdm_config)

@@ -1,5 +1,7 @@
 # 🐈 friendly-stable-audio-tools
 
+![Stable Audio 2.0](assets/fig/stable_audio_2.png)
+
 This repository is a refactored / updated version of `stable-audio-tools` 
 which is an open-source code for **music generative models**
 originally by Stability AI.
@@ -41,16 +43,16 @@ Please be sure that Docker and Singularity are installed in advance.
 ### 1. Create a Docker image
 
 ```bash
-# create a Docker image
-NAME=friendly-stable-audio-tools
-docker build  -t ${NAME} -f ./container/${NAME}.Dockerfile .
+$ # create a Docker image
+$ NAME=friendly-stable-audio-tools
+$ docker build  -t ${NAME} -f ./container/${NAME}.Dockerfile .
 ```
 
 ### 2. Convert a Docker image to a Singularity container
 
 ```bash
-# convert a Docker image to a Singularity container
-singularity build friendly-stable-audio-tools.sif docker-daemon://friendly-stable-audio-tools
+$ # convert a Docker image to a Singularity container
+$ singularity build friendly-stable-audio-tools.sif docker-daemon://friendly-stable-audio-tools
 ```
 
 By running the above script, `friendly-stable-audio-tools.sif` should be created in the working directory.
@@ -336,7 +338,7 @@ Before this part, please make sure that
 
 Now, you can train a DiT model as follows:
 ```bash
-ONTAINER_PATH="/path/to/sif/friendly-stable-audio-tools.sif"
+CONTAINER_PATH="/path/to/sif/friendly-stable-audio-tools.sif"
 ROOT_DIR="/path/to/friendly-stable-audio-tools/"
 DATASET_DIR="/path/to/your/dataset/"
 OUTPUT_DIR="/path/to/output/directory/"
@@ -345,7 +347,7 @@ MODEL_CONFIG="stable_audio_tools/configs/model_configs/txt2audio/stable_audio_2_
 DATASET_CONFIG="stable_audio_tools/configs/dataset_configs/local_training_example.json"
 
 # Pretrained checkpoint of VAE (Stage-1) model
-PRETRAINED_CKPT="/path/to/vae_ckpt/unwrapped_last.ckpt"
+PRETRANSFORM_CKPT="/path/to/vae_ckpt/unwrapped_last.ckpt"
 
 BATCH_SIZE=10 # WARNING : This is batch size per GPU
 WANDB_API_KEY="12345x6789y..."
@@ -358,7 +360,7 @@ singularity exec --nv --pwd $ROOT_DIR -B $ROOT_DIR -B $DATASET_DIR \
     ${ROOT_DIR}/train.py \
     --dataset-config ${DATASET_CONFIG} \
     --model-config ${MODEL_CONFIG} \
-    --pretrained-ckpt-path ${PRETRAINED_CKPT} \
+    --pretransform-ckpt-path ${PRETRANSFORM_CKPT} \
     --name "dit_training" \
     --num-gpus ${NUM_GPUS} \
     --batch-size ${BATCH_SIZE} \

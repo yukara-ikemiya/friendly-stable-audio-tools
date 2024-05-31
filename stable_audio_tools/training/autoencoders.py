@@ -87,7 +87,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
                       ['weights']['feature_matching'], name='feature_matching'),
         ]
 
-        if self.teacher_model is not None:
+        if self.teacher_model:
             # Distillation losses
             stft_loss_weight = self.loss_config['spectral']['weights']['mrstft'] * 0.25
             self.gen_loss_modules += [
@@ -129,7 +129,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
                        weight=self.loss_config['time']['weights']['l1'], name='l1_time_loss')
             )
 
-        if self.autoencoder.bottleneck is not None:
+        if self.autoencoder.bottleneck:
             self.gen_loss_modules += create_loss_modules_from_bottleneck(self.autoencoder.bottleneck, self.loss_config)
 
         self.losses_gen = MultiLoss(self.gen_loss_modules)
@@ -152,7 +152,6 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         ) if use_ema else None
 
     def configure_optimizers(self):
-
         opt_gen = create_optimizer_from_config(self.optimizer_configs['autoencoder']['optimizer'], self.autoencoder.parameters())
         opt_disc = create_optimizer_from_config(self.optimizer_configs['discriminator']['optimizer'], self.discriminator.parameters())
 

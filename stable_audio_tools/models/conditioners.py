@@ -585,12 +585,11 @@ def create_multi_conditioner_from_conditioning_config(config: tp.Dict[str, tp.An
         elif conditioner_type == "lut":
             conditioners[id] = TokenizerLUTConditioner(**conditioner_config)
         elif conditioner_type == "pretransform":
-            sample_rate = conditioner_config.pop("sample_rate", None)
-            assert sample_rate is not None, "Sample rate must be specified for pretransform conditioners"
+            sample_rate = conditioner_config["sample_rate"]
 
             pretransform = create_pretransform_from_config(conditioner_config.pop("pretransform_config"), sample_rate=sample_rate)
 
-            if conditioner_config.get("pretransform_ckpt_path", None) is not None:
+            if conditioner_config.get("pretransform_ckpt_path", None):
                 pretransform.load_state_dict(load_ckpt_state_dict(conditioner_config.pop("pretransform_ckpt_path")))
 
             conditioners[id] = PretransformConditioner(pretransform, **conditioner_config)

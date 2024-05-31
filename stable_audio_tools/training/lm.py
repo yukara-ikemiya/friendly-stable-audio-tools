@@ -29,14 +29,13 @@ class AudioLanguageModelTrainingWrapper(pl.LightningModule):
         super().__init__()
 
         self.model = model
-
         self.model.pretransform.requires_grad_(False)
 
         self.model_ema = None
         if use_ema:
             self.model_ema = EMA(self.model, ema_model=ema_copy, beta=0.99, update_every=10)
 
-        assert lr is not None or optimizer_configs is not None, "Must specify either lr or optimizer_configs in training config"
+        assert lr or optimizer_configs, "Must specify either lr or optimizer_configs in training config"
 
         if optimizer_configs is None:
             optimizer_configs = {
@@ -52,8 +51,8 @@ class AudioLanguageModelTrainingWrapper(pl.LightningModule):
                 }
             }
         else:
-            if lr is not None:
-                print(f"WARNING: learning_rate and optimizer_configs both specified in config. Ignoring learning_rate and using optimizer_configs.")
+            if lr:
+                print("WARNING: learning_rate and optimizer_configs both specified in config. Ignoring learning_rate and using optimizer_configs.")
 
         self.optimizer_configs = optimizer_configs
 
@@ -124,7 +123,7 @@ class AudioLanguageModelTrainingWrapper(pl.LightningModule):
         condition_tensors = None
 
         # If the model is conditioned, get the conditioning tensors
-        if self.model.conditioner is not None:
+        if self.model.conditioner:
             condition_tensors = self.model.conditioner(metadata, self.device)
 
         lm_output = self.model.compute_logits(codes, condition_tensors=condition_tensors, cfg_dropout_prob=0.1)
@@ -153,12 +152,12 @@ class AudioLanguageModelTrainingWrapper(pl.LightningModule):
         return loss
 
     def on_before_zero_grad(self, *args, **kwargs):
-        if self.model_ema is not None:
+        if self.model_ema:
             self.model_ema.update()
 
     def export_model(self, path, use_safetensors=False):
 
-        model = self.model_ema.ema_model if self.model_ema is not None else self.model
+        model = self.model_ema.ema_model if self.model_ema else self.model
 
         if use_safetensors:
             save_file(model.state_dict(), path)
@@ -195,7 +194,7 @@ class AudioLanguageModelDemoCallback(pl.Callback):
 
         module.eval()
 
-        print(f"Generating demo")
+        print("Generating demo")
         self.last_demo_step = trainer.global_step
 
         demo_length_tokens = self.demo_samples // module.model.pretransform.downsampling_ratio
@@ -215,7 +214,7 @@ class AudioLanguageModelDemoCallback(pl.Callback):
 
             for cfg_scale in self.demo_cfg_scales:
 
-                model = module.model  # module.model_ema.ema_model if module.model_ema is not None else module.model
+                model = module.model  # module.model_ema.ema_model if module.model_ema else module.model
 
                 print(f"Generating demo for cfg scale {cfg_scale}")
                 fakes = model.generate_audio(
@@ -239,7 +238,7 @@ class AudioLanguageModelDemoCallback(pl.Callback):
 
                 log_dict[f'demo_cfg_{cfg_scale}'] = wandb.Audio(filename,
                                                                 sample_rate=self.sample_rate,
-                                                                caption=f'Reconstructed')
+                                                                caption='Reconstructed')
 
                 log_dict[f'demo_melspec_left_cfg_{cfg_scale}'] = wandb.Image(audio_spectrogram_image(fakes))
 

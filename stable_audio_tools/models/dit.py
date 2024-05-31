@@ -145,26 +145,26 @@ class DiffusionTransformer(nn.Module):
         prepend_cond_mask=None,
         **kwargs
     ):
-        if cross_attn_cond is not None:
+        if cross_attn_cond:
             cross_attn_cond = self.to_cond_embed(cross_attn_cond)
 
-        if global_embed is not None:
+        if global_embed:
             # Project the global conditioning to the embedding dimension
             global_embed = self.to_global_embed(global_embed)
 
         prepend_inputs = None
         prepend_mask = None
         prepend_length = 0
-        if prepend_cond is not None:
+
+        if prepend_cond:
             # Project the prepend conditioning to the embedding dimension
             prepend_cond = self.to_prepend_embed(prepend_cond)
 
             prepend_inputs = prepend_cond
-            if prepend_cond_mask is not None:
+            if prepend_cond_mask:
                 prepend_mask = prepend_cond_mask
 
-        if input_concat_cond is not None:
-
+        if input_concat_cond:
             # Interpolate input_concat_cond to the same length as x
             if input_concat_cond.shape[2] != x.shape[2]:
                 input_concat_cond = F.interpolate(input_concat_cond, (x.shape[2], ), mode='nearest')
@@ -175,7 +175,7 @@ class DiffusionTransformer(nn.Module):
         timestep_embed = self.to_timestep_embed(self.timestep_features(t[:, None]))  # (b, embed_dim)
 
         # Timestep embedding is considered a global embedding. Add to the global conditioning if it exists
-        if global_embed is not None:
+        if global_embed:
             global_embed = global_embed + timestep_embed
         else:
             global_embed = timestep_embed
@@ -240,39 +240,38 @@ class DiffusionTransformer(nn.Module):
     ):
         assert not causal, "Causal mode is not supported for DiffusionTransformer"
 
-        if cross_attn_cond_mask is not None:
-            cross_attn_cond_mask = cross_attn_cond_mask.bool()
-
+        if cross_attn_cond_mask:
+            # cross_attn_cond_mask = cross_attn_cond_mask.bool()
             cross_attn_cond_mask = None  # Temporarily disabling conditioning masks due to kernel issue for flash attention
 
-        if prepend_cond_mask is not None:
+        if prepend_cond_mask:
             prepend_cond_mask = prepend_cond_mask.bool()
 
         # CFG dropout
         if cfg_dropout_prob > 0.0:
-            if cross_attn_cond is not None:
+            if cross_attn_cond:
                 null_embed = torch.zeros_like(cross_attn_cond, device=cross_attn_cond.device)
                 dropout_mask = torch.bernoulli(torch.full(
                     (cross_attn_cond.shape[0], 1, 1), cfg_dropout_prob, device=cross_attn_cond.device)).to(torch.bool)
                 cross_attn_cond = torch.where(dropout_mask, null_embed, cross_attn_cond)
 
-            if prepend_cond is not None:
+            if prepend_cond:
                 null_embed = torch.zeros_like(prepend_cond, device=prepend_cond.device)
                 dropout_mask = torch.bernoulli(torch.full((prepend_cond.shape[0], 1, 1), cfg_dropout_prob, device=prepend_cond.device)).to(torch.bool)
                 prepend_cond = torch.where(dropout_mask, null_embed, prepend_cond)
 
-        if cfg_scale != 1.0 and (cross_attn_cond is not None or prepend_cond is not None):
+        if cfg_scale != 1.0 and (cross_attn_cond or prepend_cond):
             # Classifier-free guidance
             # Concatenate conditioned and unconditioned inputs on the batch dimension
             batch_inputs = torch.cat([x, x], dim=0)
             batch_timestep = torch.cat([t, t], dim=0)
 
-            if global_embed is not None:
+            if global_embed:
                 batch_global_cond = torch.cat([global_embed, global_embed], dim=0)
             else:
                 batch_global_cond = None
 
-            if input_concat_cond is not None:
+            if input_concat_cond:
                 batch_input_concat_cond = torch.cat([input_concat_cond, input_concat_cond], dim=0)
             else:
                 batch_input_concat_cond = None
@@ -281,40 +280,34 @@ class DiffusionTransformer(nn.Module):
             batch_cond_masks = None
 
             # Handle CFG for cross-attention conditioning
-            if cross_attn_cond is not None:
-
+            if cross_attn_cond:
                 null_embed = torch.zeros_like(cross_attn_cond, device=cross_attn_cond.device)
 
                 # For negative cross-attention conditioning, replace the null embed with the negative cross-attention conditioning
-                if negative_cross_attn_cond is not None:
-
+                if negative_cross_attn_cond:
                     # If there's a negative cross-attention mask, set the masked tokens to the null embed
-                    if negative_cross_attn_mask is not None:
+                    if negative_cross_attn_mask:
                         negative_cross_attn_mask = negative_cross_attn_mask.to(torch.bool).unsqueeze(2)
-
                         negative_cross_attn_cond = torch.where(negative_cross_attn_mask, negative_cross_attn_cond, null_embed)
 
                     batch_cond = torch.cat([cross_attn_cond, negative_cross_attn_cond], dim=0)
-
                 else:
                     batch_cond = torch.cat([cross_attn_cond, null_embed], dim=0)
 
-                if cross_attn_cond_mask is not None:
+                if cross_attn_cond_mask:
                     batch_cond_masks = torch.cat([cross_attn_cond_mask, cross_attn_cond_mask], dim=0)
 
             batch_prepend_cond = None
             batch_prepend_cond_mask = None
 
-            if prepend_cond is not None:
-
+            if prepend_cond:
                 null_embed = torch.zeros_like(prepend_cond, device=prepend_cond.device)
-
                 batch_prepend_cond = torch.cat([prepend_cond, null_embed], dim=0)
 
-                if prepend_cond_mask is not None:
+                if prepend_cond_mask:
                     batch_prepend_cond_mask = torch.cat([prepend_cond_mask, prepend_cond_mask], dim=0)
 
-            if mask is not None:
+            if mask:
                 batch_masks = torch.cat([mask, mask], dim=0)
             else:
                 batch_masks = None

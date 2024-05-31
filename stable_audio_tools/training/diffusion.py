@@ -82,7 +82,7 @@ class DiffusionUncondTrainingWrapper(pl.LightningModule):
         alphas, sigmas = get_alphas_sigmas(t)
 
         diffusion_input = reals
-        if self.diffusion.pretransform is not None:
+        if self.diffusion.pretransform:
             with torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
                 diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
                 loss_info["reals"] = diffusion_input
@@ -160,7 +160,7 @@ class DiffusionUncondDemoCallback(pl.Callback):
         self.last_demo_step = trainer.global_step
 
         demo_samples = module.diffusion.sample_size
-        if module.diffusion.pretransform is not None:
+        if module.diffusion.pretransform:
             demo_samples = demo_samples // module.diffusion.pretransform.downsampling_ratio
 
         noise = torch.randn([self.num_demos, module.diffusion.io_channels, demo_samples]).to(module.device)
@@ -171,7 +171,7 @@ class DiffusionUncondDemoCallback(pl.Callback):
             with torch.cuda.amp.autocast():
                 fakes = sample(module.diffusion_ema, noise, self.demo_steps, 0)
 
-                if module.diffusion.pretransform is not None:
+                if module.diffusion.pretransform:
                     fakes = module.diffusion.pretransform.decode(fakes)
 
             sample_dir = os.path.join(trainer.default_root_dir, 'samples', f'{trainer.global_step:08}')
@@ -441,11 +441,11 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
         return loss
 
     def on_before_zero_grad(self, *args, **kwargs):
-        if self.diffusion_ema is not None:
+        if self.diffusion_ema:
             self.diffusion_ema.update()
 
     def export_model(self, path, use_safetensors=False):
-        if self.diffusion_ema is not None:
+        if self.diffusion_ema:
             self.diffusion.model = self.diffusion_ema.ema_model
 
         if use_safetensors:
@@ -714,7 +714,7 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
         with torch.cuda.amp.autocast():
             conditioning = self.diffusion.conditioner(metadata, self.device)
 
-        if self.diffusion.pretransform is not None:
+        if self.diffusion.pretransform:
             self.diffusion.pretransform.to(self.device)
             with torch.cuda.amp.autocast() and torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
                 diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
@@ -809,7 +809,7 @@ class DiffusionCondInpaintDemoCallback(pl.Callback):
             # log_dict[f'demo_reals'] = wandb.Audio(rearrange(demo_reals, "b d n -> d (b n)").mul(32767).to(torch.int16).cpu(),
             # sample_rate=self.sample_rate, caption="demo reals")
 
-            if module.diffusion.pretransform is not None:
+            if module.diffusion.pretransform:
                 module.diffusion.pretransform.to(module.device)
                 with torch.cuda.amp.autocast():
                     demo_reals = module.diffusion.pretransform.encode(demo_reals)
@@ -824,7 +824,7 @@ class DiffusionCondInpaintDemoCallback(pl.Callback):
             conditioning['inpaint_mask'] = [mask]
             conditioning['inpaint_masked_input'] = [masked_input]
 
-            if module.diffusion.pretransform is not None:
+            if module.diffusion.pretransform:
                 log_dict['demo_masked_input'] = wandb.Image(tokens_spectrogram_image(masked_input.cpu()))
             else:
                 log_dict['demo_masked_input'] = wandb.Image(audio_spectrogram_image(
@@ -841,7 +841,7 @@ class DiffusionCondInpaintDemoCallback(pl.Callback):
                 print(f"Generating demo for cfg scale {cfg_scale}")
                 fakes = sample(module.diffusion_ema.model, noise, self.demo_steps, 0, True, **cond_inputs, cfg_scale=cfg_scale, batch_cfg=True)
 
-                if module.diffusion.pretransform is not None:
+                if module.diffusion.pretransform:
                     with torch.cuda.amp.autocast():
                         fakes = module.diffusion.pretransform.decode(fakes)
 
@@ -900,7 +900,7 @@ class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
             MSELoss("v", "targets", weight=1.0, name="mse_loss")
         ]
 
-        if model.bottleneck is not None:
+        if model.bottleneck:
             # TODO: Use loss config for configurable bottleneck weights and reconstruction losses
             loss_modules += create_loss_modules_from_bottleneck(model.bottleneck, {})
 
@@ -926,7 +926,7 @@ class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
 
             out_channels = model.out_channels
 
-            if model.pretransform is not None:
+            if model.pretransform:
                 out_channels = model.pretransform.io_channels
 
             if out_channels == 2:
@@ -951,7 +951,7 @@ class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
 
         loss_info = {"audio_reals": reals}
 
-        if self.diffae.pretransform is not None:
+        if self.diffae.pretransform:
             with torch.no_grad():
                 reals = self.diffae.pretransform.encode(reals)
 
@@ -963,7 +963,7 @@ class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
         loss_info["latents"] = latents
         loss_info.update(encoder_info)
 
-        if self.diffae.decoder is not None:
+        if self.diffae.decoder:
             latents = self.diffae.decoder(latents)
 
         # Upsample latents to match diffusion length
@@ -998,7 +998,7 @@ class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
 
                 loss_info["pred"] = pred
 
-                if self.diffae.pretransform is not None:
+                if self.diffae.pretransform:
                     pred = self.diffae.pretransform.decode(pred)
                     loss_info["audio_pred"] = pred
 
@@ -1091,7 +1091,7 @@ class DiffusionAutoencoderDemoCallback(pl.Callback):
 
         log_dict['recon_melspec_left'] = wandb.Image(audio_spectrogram_image(reals_fakes))
 
-        if module.diffae_ema.ema_model.pretransform is not None:
+        if module.diffae_ema.ema_model.pretransform:
             with torch.no_grad() and torch.cuda.amp.autocast():
                 initial_latents = module.diffae_ema.ema_model.pretransform.encode(encoder_input)
                 first_stage_fakes = module.diffae_ema.ema_model.pretransform.decode(initial_latents)
@@ -1199,7 +1199,7 @@ class DiffusionPriorTrainingWrapper(pl.LightningModule):
 
             self.audio_out_channels = out_channels
 
-            if model.pretransform is not None:
+            if model.pretransform:
                 out_channels = model.pretransform.io_channels
 
             if self.audio_out_channels == 2:
@@ -1245,14 +1245,14 @@ class DiffusionPriorTrainingWrapper(pl.LightningModule):
         else:
             raise ValueError(f"Unknown prior type {self.prior_type}")
 
-        if self.diffusion.pretransform is not None:
+        if self.diffusion.pretransform:
             with torch.no_grad():
                 reals = self.diffusion.pretransform.encode(reals)
 
                 if self.prior_type in [PriorType.MonoToStereo, PriorType.SourceSeparation]:
                     source = self.diffusion.pretransform.encode(source)
 
-        if self.diffusion.conditioner is not None:
+        if self.diffusion.conditioner:
             with torch.cuda.amp.autocast():
                 conditioning = self.diffusion.conditioner(metadata, self.device)
         else:
@@ -1289,7 +1289,7 @@ class DiffusionPriorTrainingWrapper(pl.LightningModule):
 
                 loss_info["pred"] = pred
 
-                if self.diffusion.pretransform is not None:
+                if self.diffusion.pretransform:
                     pred = self.diffusion.pretransform.decode(pred)
                     loss_info["audio_pred"] = pred
 
@@ -1383,7 +1383,7 @@ class DiffusionPriorDemoCallback(pl.Callback):
         demo_reals = demo_reals.to(module.device)
         encoder_input = demo_reals
 
-        if module.diffusion.conditioner is not None:
+        if module.diffusion.conditioner:
             with torch.cuda.amp.autocast():
                 conditioning_tensors = module.diffusion.conditioner(metadata, module.device)
 
@@ -1396,7 +1396,7 @@ class DiffusionPriorDemoCallback(pl.Callback):
             elif module.prior_type == PriorType.SourceSeparation:
                 source = create_source_mixture(encoder_input)
 
-            if module.diffusion.pretransform is not None:
+            if module.diffusion.pretransform:
                 encoder_input = module.diffusion.pretransform.encode(encoder_input)
                 source_input = module.diffusion.pretransform.encode(source)
             else:
@@ -1406,7 +1406,7 @@ class DiffusionPriorDemoCallback(pl.Callback):
 
             fakes = sample(module.diffusion_ema.model, torch.randn_like(encoder_input), self.demo_steps, 0, True, cond=conditioning_tensors)
 
-            if module.diffusion.pretransform is not None:
+            if module.diffusion.pretransform:
                 fakes = module.diffusion.pretransform.decode(fakes)
 
         # Interleave reals and fakes

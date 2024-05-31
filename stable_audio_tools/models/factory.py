@@ -2,9 +2,7 @@ import json
 
 
 def create_model_from_config(model_config):
-    model_type = model_config.get('model_type', None)
-
-    assert model_type is not None, 'model_type must be specified in model config'
+    model_type = model_config['model_type']
 
     if model_type == 'autoencoder':
         from .autoencoders import create_autoencoder_from_config
@@ -33,9 +31,7 @@ def create_model_from_config_path(model_config_path):
 
 
 def create_pretransform_from_config(pretransform_config, sample_rate):
-    pretransform_type = pretransform_config.get('type', None)
-
-    assert pretransform_type is not None, 'type must be specified in pretransform config'
+    pretransform_type = pretransform_config['type']
 
     if pretransform_type == 'autoencoder':
         from .autoencoders import create_autoencoder_from_config
@@ -86,9 +82,7 @@ def create_pretransform_from_config(pretransform_config, sample_rate):
 
 
 def create_bottleneck_from_config(bottleneck_config):
-    bottleneck_type = bottleneck_config.get('type', None)
-
-    assert bottleneck_type is not None, 'type must be specified in bottleneck config'
+    bottleneck_type = bottleneck_config['type']
 
     if bottleneck_type == 'tanh':
         from .bottleneck import TanhBottleneck
