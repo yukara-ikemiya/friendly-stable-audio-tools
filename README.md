@@ -3,7 +3,7 @@
 ![Stable Audio 2.0](assets/fig/stable_audio_2.png)
 
 This repository is a refactored / updated version of `stable-audio-tools` 
-which is an open-source code for **music generative models**
+which is an open-source code for **audio/music generative models**
 originally by Stability AI.
 
 - https://github.com/Stability-AI/stable-audio-tools
