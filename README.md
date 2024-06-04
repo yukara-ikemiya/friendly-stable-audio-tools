@@ -133,7 +133,7 @@ The model config file defines all of the information needed to load a model for 
 The following properties are defined in the top level of the model configuration:
 
 - `model_type`
-  - The type of model being defined, currently limited to one of `"autoencoder", "diffusion_uncond", "diffusion_cond", "diffusion_cond_inpaint", "diffusion_autoencoder"`.
+  - The type of model being defined, currently limited to one of `"autoencoder", "diffusion_uncond", "diffusion_cond", "diffusion_cond_inpaint", "diffusion_autoencoder", "lm"`.
 - `sample_size`
   - The length of the audio provided to the model during training, in samples. For diffusion models, this is also the raw audio sample length used for inference.
 - `sample_rate`
@@ -214,9 +214,9 @@ from the [LAION CLAP repository](https://github.com/LAION-AI/CLAP?tab=readme-ov-
 
 Since ***Stable Audio*** uses text prompts as condition for music generation, you have to prepare them as metadata in addition to audio data.
 
-When preparing a dataset in a local environment, I support the use of metadata in JSON format as follows.
+When using a dataset in a local environment, I support the use of metadata in JSON format as follows.
 
-1. You can include any information as metadata in a JSON file, but you must always include the text data called `prompt` required for training of Stable Audio.
+1. You can include any information as metadata in a JSON file, but you must always include the text data named `prompt` required for training of Stable Audio.
 
 = music_2.json =
 ```
@@ -237,13 +237,13 @@ When preparing a dataset in a local environment, I support the use of metadata i
     └── ...
 ```
 
-## Stage 1 : VAE (Compression model)
+## Stage 1 : VAE-GAN (compression model)
 
 ### Training
 
-As the 1st stage of Stable Audio 2.0, you'll train a VAE which is a compression model for audio signal.
+As the 1st stage of Stable Audio 2.0, you'll train a VAE-GAN which is a compression model for audio signal.
 
-The model config file for a VAE is place in the [configs](stable_audio_tools/configs/model_configs/autoencoders/) directory. Regarding dataset configuration, please prepare a dataset config file corresponding to your own datasets.
+The model config file for a VAE-GAN is place in the [configs](stable_audio_tools/configs/model_configs/autoencoders/) directory. Regarding dataset configuration, please prepare a dataset config file corresponding to your own datasets.
 
 Once you prepare configuration files, you can execute a training job like this:
 ```bash
@@ -369,7 +369,6 @@ singularity exec --nv --pwd $ROOT_DIR -B $ROOT_DIR -B $DATASET_DIR \
 
 # Todo
 - [ ] Add convenient scripts for sampling
-- [ ] Add documentation for different model types
 - [ ] Add documentation for Gradio interface
 - [ ] Add troubleshooting section
 - [ ] Add contribution guidelines
