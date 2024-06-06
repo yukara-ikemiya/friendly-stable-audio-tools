@@ -12,6 +12,7 @@ from einops import rearrange
 from safetensors.torch import save_file
 import wandb
 
+from stable_audio_tools.utils.audio_utils import float_to_int16_audio
 from ..models.lm import AudioLanguageModelWrapper
 from .scheduler import create_optimizer_from_config, create_scheduler_from_config
 from .viz import audio_spectrogram_image
@@ -25,6 +26,7 @@ class AudioLanguageModelTrainingWrapper(pl.LightningModule):
         use_ema=False,
         ema_copy=None,
         optimizer_configs: dict = None,
+        pre_encoded: bool = False
     ):
         super().__init__()
 
@@ -55,6 +57,7 @@ class AudioLanguageModelTrainingWrapper(pl.LightningModule):
                 print("WARNING: learning_rate and optimizer_configs both specified in config. Ignoring learning_rate and using optimizer_configs.")
 
         self.optimizer_configs = optimizer_configs
+        self.pre_encoded = pre_encoded
 
     def configure_optimizers(self):
         lm_opt_config = self.optimizer_configs['lm']
@@ -113,9 +116,19 @@ class AudioLanguageModelTrainingWrapper(pl.LightningModule):
         if reals.ndim == 4 and reals.shape[0] == 1:
             reals = reals[0]
 
-        codes = self.model.pretransform.tokenize(reals)
+        if not self.pre_encoded:
+            codes = self.model.pretransform.tokenize(reals)
+        else:
+            codes = reals
 
-        padding_masks = torch.stack([md["padding_mask"][0] for md in metadata], dim=0).to(self.device)  # Shape (batch_size, sequence_length)
+        padding_masks = []
+        for md in metadata:
+            if md["padding_mask"].ndim == 1:
+                padding_masks.append(md["padding_mask"])
+            else:
+                padding_masks.append(md["padding_mask"][0])
+
+        padding_masks = torch.stack(padding_masks, dim=0).to(self.device)  # (batch_size, sequence_length)
 
         # Interpolate padding masks to the same length as the codes
         padding_masks = F.interpolate(padding_masks.unsqueeze(1).float(), size=codes.shape[2], mode='nearest').bool()
@@ -232,8 +245,9 @@ class AudioLanguageModelDemoCallback(pl.Callback):
 
                 log_dict = {}
 
+                fakes = float_to_int16_audio(fakes)
+
                 filename = f'demo_cfg_{cfg_scale}_{trainer.global_step:08}.wav'
-                fakes = fakes.clamp(-1, 1).mul(32766).to(torch.int16).cpu()
                 torchaudio.save(filename, fakes, self.sample_rate)
 
                 log_dict[f'demo_cfg_{cfg_scale}'] = wandb.Audio(filename,

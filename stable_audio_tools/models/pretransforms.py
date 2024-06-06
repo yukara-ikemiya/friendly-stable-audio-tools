@@ -208,6 +208,7 @@ class AudiocraftCompressionPretransform(Pretransform):
 
         self.quantize_on_decode = quantize_on_decode
         self.downsampling_ratio = round(self.model.sample_rate / self.model.frame_rate)
+        self.sample_rate = self.model.sample_rate
         self.io_channels = self.model.channels
         self.scale = scale
         self.num_quantizers = self.model.num_codebooks

@@ -18,7 +18,7 @@ from torch.nn import functional as F
 import wandb
 
 from stable_audio_tools.utils.audio_utils import float_to_int16_audio
-from ..inference.sampling import get_alphas_sigmas, sample
+from ..inference.sampling import get_alphas_sigmas, sample, sample_discrete_euler
 from ..models.diffusion import DiffusionModelWrapper, ConditionedDiffusionModelWrapper
 from ..models.autoencoders import DiffusionAutoencoder
 from ..models.diffusion_prior import PriorType
@@ -38,11 +38,13 @@ class DiffusionUncondTrainingWrapper(pl.LightningModule):
         self,
         model: DiffusionModelWrapper,
         lr: float = 1e-4,
+        pre_encoded: bool = False,
         logging_config: dict = {}
     ):
         super().__init__()
 
         self.lr = lr
+        self.pre_encoded = pre_encoded
 
         self.log_every = logging_config.get("log_every", 1)
         self.metrics_logger = MetricsLogger()
@@ -73,19 +75,28 @@ class DiffusionUncondTrainingWrapper(pl.LightningModule):
         if reals.ndim == 4 and reals.shape[0] == 1:
             reals = reals[0]
 
-        loss_info = {"audio_reals": reals}
+        loss_info = {}
+        if not self.pre_encoded:
+            loss_info["audio_reals"] = reals
+
+        diffusion_input = reals
+
+        if self.diffusion.pretransform:
+            if not self.pre_encoded:
+                with torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
+                    diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
+            else:
+                # Apply scale to pre-encoded latents if needed, as the pretransform encode function will not be run
+                if hasattr(self.diffusion.pretransform, "scale") and self.diffusion.pretransform.scale != 1.0:
+                    diffusion_input = diffusion_input / self.diffusion.pretransform.scale
+
+        loss_info["reals"] = diffusion_input
 
         # Draw uniformly distributed continuous timesteps
         t = self.rng.draw(reals.shape[0])[:, 0].to(self.device)
 
         # Calculate the noise schedule parameters for those timesteps
         alphas, sigmas = get_alphas_sigmas(t)
-
-        diffusion_input = reals
-        if self.diffusion.pretransform:
-            with torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
-                diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
-                loss_info["reals"] = diffusion_input
 
         # Combine the ground truth data and the noise
         alphas = alphas[:, None, None]
@@ -214,13 +225,14 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
         self,
         model: ConditionedDiffusionModelWrapper,
         lr: float = None,
-        causal_dropout: float = 0.0,
         mask_padding: bool = False,
         mask_padding_dropout: float = 0.0,
         use_ema: bool = True,
         log_loss_info: bool = False,
         optimizer_configs: dict = None,
-        use_reconstruction_loss: bool = False,
+        pre_encoded: bool = False,
+        cfg_dropout_prob: float = 0.1,
+        timestep_sampler: tp.Literal["uniform", "logit_normal"] = "uniform",
         logging_config: dict = {}
     ):
         super().__init__()
@@ -229,9 +241,11 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
 
         self.mask_padding = mask_padding
         self.mask_padding_dropout = mask_padding_dropout
-        self.causal_dropout = causal_dropout
         self.log_loss_info = log_loss_info
-        self.use_reconstruction_loss = use_reconstruction_loss
+        self.pre_encoded = pre_encoded
+        self.cfg_dropout_prob = cfg_dropout_prob
+        self.timestep_sampler = timestep_sampler
+        self.diffusion_objective = model.diffusion_objective
 
         self.log_every = logging_config.get("log_every", 1)
         self.metrics_logger = MetricsLogger()
@@ -249,45 +263,10 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
         self.rng = torch.quasirandom.SobolEngine(1, scramble=True)
 
         self.loss_modules = [
-            MSELoss("v", "targets", weight=1.0, mask_key="padding_mask" if self.mask_padding else None, name="mse_loss")
+            MSELoss("output", "targets",
+                    weight=1.0, mask_key="padding_mask" if self.mask_padding else None,
+                    name="mse_loss")
         ]
-
-        if use_reconstruction_loss:
-            scales = [2048, 1024, 512, 256, 128, 64, 32]
-            hop_sizes = []
-            win_lengths = []
-            overlap = 0.75
-            for s in scales:
-                hop_sizes.append(int(s * (1 - overlap)))
-                win_lengths.append(s)
-
-            sample_rate = model.sample_rate
-
-            stft_loss_args = {
-                "fft_sizes": scales,
-                "hop_sizes": hop_sizes,
-                "win_lengths": win_lengths,
-                "perceptual_weighting": True
-            }
-
-            out_channels = model.pretransform.io_channels if model.pretransform else model.io_channels
-            self.audio_out_channels = out_channels
-
-            if self.audio_out_channels == 2:
-                self.sdstft = auraloss.freq.SumAndDifferenceSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
-                self.lrstft = auraloss.freq.MultiResolutionSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
-
-                # Add left and right channel reconstruction losses in addition to the sum and difference
-                self.loss_modules += [
-                    AuralossLoss(self.lrstft, 'audio_reals_left', 'pred_left', name='stft_loss_left', weight=0.05),
-                    AuralossLoss(self.lrstft, 'audio_reals_right', 'pred_right', name='stft_loss_right', weight=0.05),
-                ]
-            else:
-                self.sdstft = auraloss.freq.MultiResolutionSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
-
-            self.loss_modules.append(
-                AuralossLoss(self.sdstft, 'audio_reals', 'audio_pred', name='mrstft_loss', weight=0.1)
-            )
 
         self.losses = MultiLoss(self.loss_modules)
 
@@ -329,16 +308,9 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
         if reals.ndim == 4 and reals.shape[0] == 1:
             reals = reals[0]
 
-        loss_info = {"audio_reals": reals}
-
-        # Draw uniformly distributed continuous timesteps
-        t = self.rng.draw(reals.shape[0])[:, 0].to(self.device)
-
-        # Replace 1% of t with ones to ensure training on terminal SNR
-        t = torch.where(torch.rand_like(t) < 0.01, torch.ones_like(t), t)
-
-        # Calculate the noise schedule parameters for those timesteps
-        alphas, sigmas = get_alphas_sigmas(t)
+        loss_info = {}
+        if not self.pre_encoded:
+            loss_info["audio_reals"] = reals
 
         with torch.cuda.amp.autocast():
             self.diffusion.conditioner.set_device(self.device)
@@ -353,51 +325,54 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
 
         diffusion_input = reals
         if self.diffusion.pretransform:
-            with torch.cuda.amp.autocast() and torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
-                diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
+            if not self.pre_encoded:
+                with torch.cuda.amp.autocast() and torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
+                    diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
 
-                # If mask_padding is on, interpolate the padding masks to the size of the pretransformed input
-                if use_padding_mask:
-                    padding_masks = F.interpolate(padding_masks.unsqueeze(1).float(), size=diffusion_input.shape[2], mode="nearest").squeeze(1).bool()
+                    # If mask_padding is on, interpolate the padding masks to the size of the pretransformed input
+                    if use_padding_mask:
+                        padding_masks = F.interpolate(padding_masks.unsqueeze(1).float(
+                        ), size=diffusion_input.shape[2], mode="nearest").squeeze(1).bool()
+            else:
+                # Apply scale to pre-encoded latents if needed, as the pretransform encode function will not be run
+                if hasattr(self.diffusion.pretransform, "scale") and self.diffusion.pretransform.scale != 1.0:
+                    diffusion_input = diffusion_input / self.diffusion.pretransform.scale
+
+        if self.timestep_sampler == "uniform":
+            # Draw uniformly distributed continuous timesteps
+            t = self.rng.draw(reals.shape[0])[:, 0].to(self.device)
+        elif self.timestep_sampler == "logit_normal":
+            t = torch.sigmoid(torch.randn(reals.shape[0], device=self.device))
+
+        # Calculate the noise schedule parameters for those timesteps
+        if self.diffusion_objective == "v":
+            alphas, sigmas = get_alphas_sigmas(t)
+        elif self.diffusion_objective == "rectified_flow":
+            alphas, sigmas = 1 - t, t
 
         # Combine the ground truth data and the noise
         alphas = alphas[:, None, None]
         sigmas = sigmas[:, None, None]
         noise = torch.randn_like(diffusion_input)
         noised_inputs = diffusion_input * alphas + noise * sigmas
-        targets = noise * alphas - diffusion_input * sigmas
+
+        if self.diffusion_objective == "v":
+            targets = noise * alphas - diffusion_input * sigmas
+        elif self.diffusion_objective == "rectified_flow":
+            targets = noise - diffusion_input
 
         extra_args = {}
-        if 0.0 < self.causal_dropout < 1.0:
-            extra_args["causal"] = random.random() < self.causal_dropout
         if use_padding_mask:
             extra_args["mask"] = padding_masks
 
         with torch.cuda.amp.autocast():
-            v = self.diffusion(noised_inputs, t, cond=conditioning, cfg_dropout_prob=0.1, **extra_args)
+            output = self.diffusion(noised_inputs, t, cond=conditioning, cfg_dropout_prob=self.cfg_dropout_prob, **extra_args)
 
             loss_info.update({
-                "v": v,
+                "output": output,
                 "targets": targets,
                 "padding_mask": padding_masks if use_padding_mask else None,
             })
-
-            if self.use_reconstruction_loss:
-                pred = noised_inputs * alphas - v * sigmas
-
-                loss_info["pred"] = pred
-
-                if self.diffusion.pretransform:
-                    with torch.cuda.amp.autocast():
-                        pred = self.diffusion.pretransform.decode(pred)
-
-                    loss_info["audio_pred"] = pred
-
-                if self.audio_out_channels == 2:
-                    loss_info["pred_left"] = pred[:, 0:1, :]
-                    loss_info["pred_right"] = pred[:, 1:2, :]
-                    loss_info["audio_reals_left"] = loss_info["audio_reals"][:, 0:1, :]
-                    loss_info["audio_reals_right"] = loss_info["audio_reals"][:, 1:2, :]
 
             loss, losses = self.losses(loss_info)
 
@@ -405,7 +380,7 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
                 # Loss debugging logs
                 num_loss_buckets = 10
                 bucket_size = 1 / num_loss_buckets
-                loss_all = F.mse_loss(v, targets, reduction="none")
+                loss_all = F.mse_loss(output, targets, reduction="none")
 
                 sigmas = rearrange(self.all_gather(sigmas), "w b c n -> (w b) c n").squeeze()
 
@@ -546,7 +521,10 @@ class DiffusionCondDemoCallback(pl.Callback):
                     model = module.diffusion_ema.model if module.diffusion_ema else module.diffusion.model
 
                     # Sample
-                    fakes = sample(model, noise, self.demo_steps, 0, True, **cond_inputs, cfg_scale=cfg_scale, batch_cfg=True)
+                    if module.diffusion_objective == "v":
+                        fakes = sample(model, noise, self.demo_steps, 0, verbose=True, **cond_inputs, cfg_scale=cfg_scale, batch_cfg=True)
+                    elif module.diffusion_objective == "rectified_flow":
+                        fakes = sample_discrete_euler(model, noise, self.demo_steps, verbose=True, **cond_inputs, cfg_scale=cfg_scale, batch_cfg=True)
 
                     # Decode
                     if module.diffusion.pretransform:
@@ -625,20 +603,37 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
             self,
             model: ConditionedDiffusionModelWrapper,
             lr: float = 1e-4,
-            max_mask_segments=10
+            max_mask_segments=10,
+            log_loss_info: bool = False,
+            optimizer_configs: dict = None,
+            use_ema: bool = True,
+            pre_encoded: bool = False,
+            cfg_dropout_prob: float = 0.1,
+            timestep_sampler: tp.Literal["uniform", "logit_normal"] = "uniform"
     ):
         super().__init__()
 
         self.diffusion = model
 
-        self.diffusion_ema = EMA(
-            self.diffusion.model,
-            beta=0.9999,
-            power=3 / 4,
-            update_every=1,
-            update_after_step=1,
-            include_online_model=False
-        )
+        self.log_loss_info = log_loss_info
+        self.optimizer_configs = optimizer_configs
+        self.use_ema = use_ema
+        self.pre_encoded = pre_encoded
+        self.cfg_dropout_prob = cfg_dropout_prob
+        self.timestep_sampler = timestep_sampler
+        self.diffusion_objective = model.diffusion_objective
+
+        if self.use_ema:
+            self.diffusion_ema = EMA(
+                self.diffusion.model,
+                beta=0.9999,
+                power=3 / 4,
+                update_every=1,
+                update_after_step=1,
+                include_online_model=False
+            )
+        else:
+            self.diffusion_ema = None
 
         self.lr = lr
         self.max_mask_segments = max_mask_segments
@@ -646,17 +641,41 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
         self.rng = torch.quasirandom.SobolEngine(1, scramble=True)
 
         self.loss_modules = [
-            MSELoss("v",
-                    "targets",
-                    weight=1.0,
-                    name="mse_loss"
-                    )
+            MSELoss("output", "targets", weight=1.0, name="mse_loss")
         ]
 
         self.losses = MultiLoss(self.loss_modules)
 
+        assert lr or optimizer_configs, "Must specify either lr or optimizer_configs in training config"
+
+        if optimizer_configs is None:
+            optimizer_configs = {
+                "diffusion": {
+                    "optimizer": {
+                        "type": "Adam",
+                        "config": {
+                            "lr": lr
+                        }
+                    }
+                }
+            }
+        elif lr:
+            warnings.warn("'learning_rate' and 'optimizer_configs' both specified in config. \
+                        Ignoring learning_rate and using optimizer_configs.")
+
     def configure_optimizers(self):
-        return optim.Adam([*self.diffusion.parameters()], lr=self.lr)
+        diffusion_opt_config = self.optimizer_configs['diffusion']
+        opt_diff = create_optimizer_from_config(diffusion_opt_config['optimizer'], self.diffusion.parameters())
+
+        if "scheduler" in diffusion_opt_config:
+            sched_diff = create_scheduler_from_config(diffusion_opt_config['scheduler'], opt_diff)
+            sched_diff_config = {
+                "scheduler": sched_diff,
+                "interval": "step"
+            }
+            return [opt_diff], [sched_diff_config]
+
+        return [opt_diff]
 
     def random_mask(self, sequence, max_mask_length):
         b, _, sequence_length = sequence.size()
@@ -703,11 +722,9 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
         if reals.ndim == 4 and reals.shape[0] == 1:
             reals = reals[0]
 
-        # Draw uniformly distributed continuous timesteps
-        t = self.rng.draw(reals.shape[0])[:, 0].to(self.device)
-
-        # Calculate the noise schedule parameters for those timesteps
-        alphas, sigmas = get_alphas_sigmas(t)
+        loss_info = {}
+        if not self.pre_encoded:
+            loss_info["audio_reals"] = reals
 
         diffusion_input = reals
 
@@ -715,9 +732,18 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
             conditioning = self.diffusion.conditioner(metadata, self.device)
 
         if self.diffusion.pretransform:
-            self.diffusion.pretransform.to(self.device)
-            with torch.cuda.amp.autocast() and torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
-                diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
+            if not self.pre_encoded:
+                with torch.cuda.amp.autocast() and torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
+                    diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
+
+                    # If mask_padding is on, interpolate the padding masks to the size of the pretransformed input
+                    # if use_padding_mask:
+                    #     padding_masks = F.interpolate(padding_masks.unsqueeze(1).float(),
+                    #                                   size=diffusion_input.shape[2], mode="nearest").squeeze(1).bool()
+            else:
+                # Apply scale to pre-encoded latents if needed, as the pretransform encode function will not be run
+                if hasattr(self.diffusion.pretransform, "scale") and self.diffusion.pretransform.scale != 1.0:
+                    diffusion_input = diffusion_input / self.diffusion.pretransform.scale
 
         # Max mask size is the full sequence length
         max_mask_length = diffusion_input.shape[2]
@@ -728,26 +754,67 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
         conditioning['inpaint_mask'] = [mask]
         conditioning['inpaint_masked_input'] = [masked_input]
 
+        if self.timestep_sampler == "uniform":
+            # Draw uniformly distributed continuous timesteps
+            t = self.rng.draw(reals.shape[0])[:, 0].to(self.device)
+        elif self.timestep_sampler == "logit_normal":
+            t = torch.sigmoid(torch.randn(reals.shape[0], device=self.device))
+
+        # Calculate the noise schedule parameters for those timesteps
+        if self.diffusion_objective == "v":
+            alphas, sigmas = get_alphas_sigmas(t)
+        elif self.diffusion_objective == "rectified_flow":
+            alphas, sigmas = 1 - t, t
+
         # Combine the ground truth data and the noise
         alphas = alphas[:, None, None]
         sigmas = sigmas[:, None, None]
         noise = torch.randn_like(diffusion_input)
         noised_inputs = diffusion_input * alphas + noise * sigmas
-        targets = noise * alphas - diffusion_input * sigmas
 
+        if self.diffusion_objective == "v":
+            targets = noise * alphas - diffusion_input * sigmas
+        elif self.diffusion_objective == "rectified_flow":
+            targets = noise - diffusion_input
+
+        extra_args = {}
         with torch.cuda.amp.autocast():
-            v = self.diffusion(noised_inputs, t, cond=conditioning, cfg_dropout_prob=0.1)
+            output = self.diffusion(noised_inputs, t, cond=conditioning, cfg_dropout_prob=self.cfg_dropout_prob, **extra_args)
 
             loss_info = {
-                "v": v,
+                "output": output,
                 "targets": targets
             }
 
             loss, losses = self.losses(loss_info)
 
+            if self.log_loss_info:
+                # Loss debugging logs
+                num_loss_buckets = 10
+                bucket_size = 1 / num_loss_buckets
+                loss_all = F.mse_loss(output, targets, reduction="none")
+
+                sigmas = rearrange(self.all_gather(sigmas), "w b c n -> (w b) c n").squeeze()
+
+                # gather loss_all across all GPUs
+                loss_all = rearrange(self.all_gather(loss_all), "w b c n -> (w b) c n")
+
+                # Bucket loss values based on corresponding sigma values, bucketing sigma values by bucket_size
+                loss_all = torch.stack([loss_all[(sigmas >= i) & (sigmas < i + bucket_size)].mean()
+                                       for i in torch.arange(0, 1, bucket_size).to(self.device)])
+
+                # Log bucketed losses with corresponding sigma bucket values, if it's not NaN
+                debug_log_dict = {
+                    f"model/loss_all_{i / num_loss_buckets:.1f}": loss_all[i].detach() for i in range(num_loss_buckets)
+                    if not torch.isnan(loss_all[i])
+                }
+
+                self.log_dict(debug_log_dict)
+
         log_dict = {
             'train/loss': loss.detach(),
             'train/std_data': diffusion_input.std(),
+            'train/lr': self.trainer.optimizers[0].param_groups[0]['lr']
         }
 
         for loss_name, loss_value in losses.items():
@@ -758,11 +825,17 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
         return loss
 
     def on_before_zero_grad(self, *args, **kwargs):
-        self.diffusion_ema.update()
+        if self.diffusion_ema:
+            self.diffusion_ema.update()
 
-    def export_model(self, path):
-        self.diffusion.model = self.diffusion_ema.ema_model
-        save_file(self.diffusion.state_dict(), path)
+    def export_model(self, path, use_safetensors: bool = False):
+        if self.diffusion_ema:
+            self.diffusion.model = self.diffusion_ema.ema_model
+
+        if use_safetensors:
+            save_file(self.diffusion.state_dict(), path)
+        else:
+            torch.save({"state_dict": self.diffusion.state_dict()}, path)
 
 
 class DiffusionCondInpaintDemoCallback(pl.Callback):
@@ -803,16 +876,15 @@ class DiffusionCondInpaintDemoCallback(pl.Callback):
 
             demo_reals = demo_reals.to(module.device)
 
-            # Log the real audio
-            log_dict['demo_reals_melspec_left'] = wandb.Image(audio_spectrogram_image(
-                rearrange(demo_reals, "b d n -> d (b n)").mul(32767).to(torch.int16).cpu()))
-            # log_dict[f'demo_reals'] = wandb.Audio(rearrange(demo_reals, "b d n -> d (b n)").mul(32767).to(torch.int16).cpu(),
-            # sample_rate=self.sample_rate, caption="demo reals")
+            if not module.pre_encoded:
+                # Log the real audio
+                log_dict['demo_reals_melspec_left'] = wandb.Image(audio_spectrogram_image(
+                    rearrange(demo_reals, "b d n -> d (b n)").mul(32767).to(torch.int16).cpu()))
 
-            if module.diffusion.pretransform:
-                module.diffusion.pretransform.to(module.device)
-                with torch.cuda.amp.autocast():
-                    demo_reals = module.diffusion.pretransform.encode(demo_reals)
+                if module.diffusion.pretransform is not None:
+                    module.diffusion.pretransform.to(module.device)
+                    with torch.cuda.amp.autocast():
+                        demo_reals = module.diffusion.pretransform.encode(demo_reals)
 
             demo_samples = demo_reals.shape[2]
 
@@ -837,9 +909,14 @@ class DiffusionCondInpaintDemoCallback(pl.Callback):
             trainer.logger.experiment.log(log_dict)
 
             for cfg_scale in self.demo_cfg_scales:
-
                 print(f"Generating demo for cfg scale {cfg_scale}")
-                fakes = sample(module.diffusion_ema.model, noise, self.demo_steps, 0, True, **cond_inputs, cfg_scale=cfg_scale, batch_cfg=True)
+
+                model = module.diffusion_ema.model if module.diffusion_ema else module.diffusion.model
+
+                if module.diffusion_objective == "v":
+                    fakes = sample(model, noise, self.demo_steps, 0, verbose=True, **cond_inputs, cfg_scale=cfg_scale, batch_cfg=True)
+                elif module.diffusion_objective == "rectified_flow":
+                    fakes = sample_discrete_euler(model, noise, self.demo_steps, verbose=True, **cond_inputs, cfg_scale=cfg_scale, batch_cfg=True)
 
                 if module.diffusion.pretransform:
                     with torch.cuda.amp.autocast():
@@ -1239,9 +1316,6 @@ class DiffusionPriorTrainingWrapper(pl.LightningModule):
         if self.prior_type == PriorType.MonoToStereo:
             source = reals.mean(dim=1, keepdim=True).repeat(1, reals.shape[1], 1).to(self.device)
             loss_info["audio_reals_mono"] = source
-        elif self.prior_type == PriorType.SourceSeparation:
-            source = create_source_mixture(reals)
-            loss_info["audio_mixture"] = source
         else:
             raise ValueError(f"Unknown prior type {self.prior_type}")
 
@@ -1249,7 +1323,7 @@ class DiffusionPriorTrainingWrapper(pl.LightningModule):
             with torch.no_grad():
                 reals = self.diffusion.pretransform.encode(reals)
 
-                if self.prior_type in [PriorType.MonoToStereo, PriorType.SourceSeparation]:
+                if self.prior_type in [PriorType.MonoToStereo]:
                     source = self.diffusion.pretransform.encode(source)
 
         if self.diffusion.conditioner:
@@ -1393,8 +1467,6 @@ class DiffusionPriorDemoCallback(pl.Callback):
         with torch.no_grad() and torch.cuda.amp.autocast():
             if module.prior_type == PriorType.MonoToStereo and encoder_input.shape[1] > 1:
                 source = encoder_input.mean(dim=1, keepdim=True).repeat(1, encoder_input.shape[1], 1)
-            elif module.prior_type == PriorType.SourceSeparation:
-                source = create_source_mixture(encoder_input)
 
             if module.diffusion.pretransform:
                 encoder_input = module.diffusion.pretransform.encode(encoder_input)

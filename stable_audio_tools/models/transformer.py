@@ -23,6 +23,8 @@ try:
 except ImportError:
     natten = None
 
+from .utils import exists
+
 
 def checkpoint(function, *args, **kwargs):
     kwargs.setdefault("use_reentrant", False)
@@ -61,7 +63,7 @@ class AbsolutePositionalEmbedding(nn.Module):
         if pos is None:
             pos = torch.arange(seq_len, device=device)
 
-        if seq_start_pos is not None:
+        if exists(seq_start_pos):
             pos = (pos - seq_start_pos[..., None]).clamp(min=0)
 
         pos_emb = self.emb(pos)
@@ -86,7 +88,7 @@ class ScaledSinusoidalEmbedding(nn.Module):
         if pos is None:
             pos = torch.arange(seq_len, device=device)
 
-        if seq_start_pos is not None:
+        if exists(seq_start_pos):
             pos = pos - seq_start_pos[..., None]
 
         emb = einsum('i, j -> i j', pos, self.inv_freq)
@@ -288,25 +290,24 @@ class FeedForward(nn.Module):
 class Attention(nn.Module):
     def __init__(
         self,
-        dim,
-        dim_heads=64,
-        dim_context=None,
-        causal=False,
-        zero_init_output=True,
-        qk_norm=False,
-        natten_kernel_size=None
+        dim: int,
+        dim_heads: int = 64,
+        dim_context: tp.Optional[int] = None,
+        causal: bool = False,
+        zero_init_output: bool = True,
+        qk_norm: bool = False,
+        natten_kernel_size: tp.Optional[int] = None
     ):
         super().__init__()
         self.dim = dim
         self.dim_heads = dim_heads
         self.causal = causal
 
-        dim_kv = dim_context if dim_context is not None else dim
-
+        dim_kv = dim_context if dim_context else dim
         self.num_heads = dim // dim_heads
         self.kv_heads = dim_kv // dim_heads
 
-        if dim_context is not None:
+        if dim_context:
             self.to_q = nn.Linear(dim, dim, bias=False)
             self.to_kv = nn.Linear(dim_kv, dim_kv * 2, bias=False)
         else:
@@ -321,18 +322,15 @@ class Attention(nn.Module):
 
         # Using 1d neighborhood attention
         self.natten_kernel_size = natten_kernel_size
-        if natten_kernel_size is not None:
-            return
 
-        self.use_pt_flash = torch.cuda.is_available() and version.parse(torch.__version__) >= version.parse('2.0.0')
-
-        self.use_fa_flash = torch.cuda.is_available() and flash_attn_func is not None
-
-        self.sdp_kwargs = dict(
-            enable_flash=True,
-            enable_math=True,
-            enable_mem_efficient=True
-        )
+        if not natten_kernel_size:
+            self.use_pt_flash = torch.cuda.is_available() and version.parse(torch.__version__) >= version.parse('2.0.0')
+            self.use_fa_flash = torch.cuda.is_available() and flash_attn_func
+            self.sdp_kwargs = dict(
+                enable_flash=True,
+                enable_math=True,
+                enable_mem_efficient=True
+            )
 
     def flash_attn(
             self,
@@ -358,12 +356,12 @@ class Attention(nn.Module):
         if v.ndim == 3:
             v = rearrange(v, 'b ... -> b 1 ...').expand_as(q)
 
-        causal = self.causal if causal is None else causal
+        causal = self.causal if (causal is None) else causal
 
         if q_len == 1 and causal:
             causal = False
 
-        if mask is not None:
+        if exists(mask):
             assert mask.ndim == 4
             mask = mask.expand(batch, heads, q_len, k_len)
 
@@ -381,7 +379,7 @@ class Attention(nn.Module):
 
         row_is_entirely_masked = None
 
-        if mask is not None and causal:
+        if exists(mask) and causal:
             causal_mask = self.create_causal_mask(q_len, k_len, device=device)
             mask = mask & ~causal_mask
 
@@ -401,21 +399,21 @@ class Attention(nn.Module):
 
         # for a row that is entirely masked out, should zero out the output of that row token
 
-        if row_is_entirely_masked is not None:
+        if exists(row_is_entirely_masked):
             out = out.masked_fill(row_is_entirely_masked[..., None], 0.)
 
         return out
 
     def forward(
         self,
-        x,
-        context=None,
-        mask=None,
-        context_mask=None,
+        x: torch.Tensor,
+        context: tp.Optional[torch.Tensor] = None,
+        mask: tp.Optional[torch.Tensor] = None,
+        context_mask: tp.Optional[torch.Tensor] = None,
         rotary_pos_emb=None,
-        causal=None
+        causal: tp.Optional[bool] = None
     ):
-        h, kv_h, has_context = self.num_heads, self.kv_heads, context is not None
+        h, kv_h, has_context = self.num_heads, self.kv_heads, exists(context)
 
         kv_input = context if has_context else x
 
@@ -437,7 +435,7 @@ class Attention(nn.Module):
             q = F.normalize(q, dim=-1)
             k = F.normalize(k, dim=-1)
 
-        if rotary_pos_emb is not None and not has_context:
+        if exists(rotary_pos_emb) and not has_context:
             freqs, _ = rotary_pos_emb
 
             q_dtype = q.dtype
@@ -462,7 +460,7 @@ class Attention(nn.Module):
         masks = []
         final_attn_mask = None  # The mask that will be applied to the attention matrix, taking all masks into account
 
-        if input_mask is not None:
+        if exists(input_mask):
             input_mask = rearrange(input_mask, 'b j -> b 1 1 j')
             masks.append(~input_mask)
 
@@ -478,7 +476,7 @@ class Attention(nn.Module):
         if n == 1 and causal:
             causal = False
 
-        if self.natten_kernel_size is not None:
+        if self.natten_kernel_size:
             if natten is None:
                 raise ImportError('natten not installed, please install natten to use neighborhood attention')
 
@@ -487,7 +485,7 @@ class Attention(nn.Module):
 
             attn = natten.functional.natten1dqk(q, k, kernel_size=self.natten_kernel_size, dilation=1)
 
-            if final_attn_mask is not None:
+            if exists(final_attn_mask):
                 attn = attn.masked_fill(final_attn_mask, -torch.finfo(attn.dtype).max)
 
             attn = F.softmax(attn, dim=-1, dtype=torch.float32)
@@ -511,7 +509,6 @@ class Attention(nn.Module):
 
         else:
             # Fall back to custom implementation
-
             if h != kv_h:
                 # Repeat interleave kv_heads to match q_heads
                 heads_per_kv_head = h // kv_h
@@ -520,14 +517,13 @@ class Attention(nn.Module):
             scale = 1. / (q.shape[-1] ** 0.5)
 
             kv_einsum_eq = 'b j d' if k.ndim == 3 else 'b h j d'
-
             dots = einsum(f'b h i d, {kv_einsum_eq} -> b h i j', q, k) * scale
 
             i, j, dtype = *dots.shape[-2:], dots.dtype
 
             mask_value = -torch.finfo(dots.dtype).max
 
-            if final_attn_mask is not None:
+            if exists(final_attn_mask):
                 dots = dots.masked_fill(~final_attn_mask, mask_value)
 
             if causal:
@@ -544,12 +540,14 @@ class Attention(nn.Module):
 
         # Communicate between heads
 
-        with autocast(enabled=False):
-            out_dtype = out.dtype
-            out = out.to(torch.float32)
-            out = self.to_out(out).to(out_dtype)
+        # with autocast(enabled=False):
+        #     out_dtype = out.dtype
+        #     out = out.to(torch.float32)
+        #     out = self.to_out(out).to(out_dtype)
 
-        if mask is not None:
+        out = self.to_out(out)
+
+        if exists(mask):
             mask = rearrange(mask, 'b n -> b n 1')
             out = out.masked_fill(~mask, 0.)
 
@@ -596,16 +594,16 @@ class ConformerModule(nn.Module):
 class TransformerBlock(nn.Module):
     def __init__(
             self,
-            dim,
-            dim_heads=64,
-            cross_attend=False,
-            dim_context=None,
-            global_cond_dim=None,
-            causal=False,
-            zero_init_branch_outputs=True,
-            conformer=False,
-            layer_ix=-1,
-            remove_norms=False,
+            dim: int,
+            dim_heads: int = 64,
+            cross_attend: bool = False,
+            dim_context: tp.Optional[int] = None,
+            global_cond_dim: tp.Optional[int] = None,
+            causal: bool = False,
+            zero_init_branch_outputs: bool = True,
+            conformer: bool = False,
+            layer_ix: int = -1,
+            remove_norms: bool = False,
             attn_kwargs={},
             ff_kwargs={},
             norm_kwargs={}
@@ -617,6 +615,8 @@ class TransformerBlock(nn.Module):
         self.cross_attend = cross_attend
         self.dim_context = dim_context
         self.causal = causal
+        self.global_cond_dim = global_cond_dim
+        self.layer_ix = layer_ix
 
         self.pre_norm = LayerNorm(dim, **norm_kwargs) if not remove_norms else nn.Identity()
 
@@ -642,13 +642,9 @@ class TransformerBlock(nn.Module):
         self.ff_norm = LayerNorm(dim, **norm_kwargs) if not remove_norms else nn.Identity()
         self.ff = FeedForward(dim, zero_init_output=zero_init_branch_outputs, **ff_kwargs)
 
-        self.layer_ix = layer_ix
-
         self.conformer = ConformerModule(dim, norm_kwargs=norm_kwargs) if conformer else None
 
-        self.global_cond_dim = global_cond_dim
-
-        if global_cond_dim is not None:
+        if global_cond_dim:
             self.to_scale_shift_gate = nn.Sequential(
                 nn.SiLU(),
                 nn.Linear(global_cond_dim, dim * 6, bias=False)
@@ -659,14 +655,14 @@ class TransformerBlock(nn.Module):
 
     def forward(
         self,
-        x,
-        context=None,
-        global_cond=None,
-        mask=None,
-        context_mask=None,
+        x: torch.Tensor,
+        context: tp.Optional[torch.Tensor] = None,
+        global_cond: tp.Optional[torch.Tensor] = None,
+        mask: tp.Optional[torch.Tensor] = None,
+        context_mask: tp.Optional[torch.Tensor] = None,
         rotary_pos_emb=None
     ):
-        if self.global_cond_dim is not None and self.global_cond_dim > 0 and global_cond is not None:
+        if self.global_cond_dim and self.global_cond_dim > 0 and exists(global_cond):
 
             scale_self, shift_self, gate_self, scale_ff, shift_ff, gate_ff = self.to_scale_shift_gate(global_cond).unsqueeze(1).chunk(6, dim=-1)
 
@@ -678,10 +674,10 @@ class TransformerBlock(nn.Module):
             x = x * torch.sigmoid(1 - gate_self)
             x = x + residual
 
-            if context is not None:
+            if exists(context):
                 x = x + self.cross_attn(self.cross_attend_norm(x), context=context, context_mask=context_mask)
 
-            if self.conformer is not None:
+            if self.conformer:
                 x = x + self.conformer(x)
 
             # feedforward with adaLN
@@ -695,10 +691,10 @@ class TransformerBlock(nn.Module):
         else:
             x = x + self.self_attn(self.pre_norm(x), mask=mask, rotary_pos_emb=rotary_pos_emb)
 
-            if context is not None:
+            if exists(context):
                 x = x + self.cross_attn(self.cross_attend_norm(x), context=context, context_mask=context_mask)
 
-            if self.conformer is not None:
+            if self.conformer:
                 x = x + self.conformer(x)
 
             x = x + self.ff(self.ff_norm(x))
@@ -709,46 +705,44 @@ class TransformerBlock(nn.Module):
 class ContinuousTransformer(nn.Module):
     def __init__(
         self,
-        dim,
-        depth,
+        dim: int,
+        depth: int,
         *,
-        dim_in=None,
-        dim_out=None,
-        dim_heads=64,
-        cross_attend=False,
-        cond_token_dim=None,
-        global_cond_dim=None,
-        causal=False,
-        rotary_pos_emb=True,
-        zero_init_branch_outputs=True,
-        conformer=False,
-        use_sinusoidal_emb=False,
-        use_abs_pos_emb=False,
-        abs_pos_emb_max_length=10000,
+        dim_in: tp.Optional[int] = None,
+        dim_out: tp.Optional[int] = None,
+        dim_heads: int = 64,
+        cross_attend: bool = False,
+        cond_token_dim: tp.Optional[int] = None,
+        global_cond_dim: tp.Optional[int] = None,
+        causal: bool = False,
+        rotary_pos_emb: bool = True,
+        zero_init_branch_outputs: bool = True,
+        conformer: bool = False,
+        use_sinusoidal_emb: bool = False,
+        use_abs_pos_emb: bool = False,
+        abs_pos_emb_max_length: int = 10000,
         **kwargs
     ):
-
         super().__init__()
+        assert not (use_sinusoidal_emb and use_abs_pos_emb), "Can't select both of sinusoidal/abs positional embedding type."
 
         self.dim = dim
         self.depth = depth
         self.causal = causal
         self.layers = nn.ModuleList([])
 
-        self.project_in = nn.Linear(dim_in, dim, bias=False) if dim_in is not None else nn.Identity()
-        self.project_out = nn.Linear(dim, dim_out, bias=False) if dim_out is not None else nn.Identity()
+        self.project_in = nn.Linear(dim_in, dim, bias=False) if dim_in else nn.Identity()
+        self.project_out = nn.Linear(dim, dim_out, bias=False) if dim_out else nn.Identity()
 
-        if rotary_pos_emb:
-            self.rotary_pos_emb = RotaryEmbedding(max(dim_heads // 2, 32))
-        else:
-            self.rotary_pos_emb = None
+        self.rotary_pos_emb = RotaryEmbedding(max(dim_heads // 2, 32)) if rotary_pos_emb else None
 
-        self.use_sinusoidal_emb = use_sinusoidal_emb
+        self.pos_type = None
+        self.pos_emb = None
         if use_sinusoidal_emb:
+            self.pos_type = 'sinusoidal'
             self.pos_emb = ScaledSinusoidalEmbedding(dim)
-
-        self.use_abs_pos_emb = use_abs_pos_emb
-        if use_abs_pos_emb:
+        elif use_abs_pos_emb:
+            self.pos_type = 'abs'
             self.pos_emb = AbsolutePositionalEmbedding(dim, abs_pos_emb_max_length)
 
         for i in range(depth):
@@ -769,38 +763,37 @@ class ContinuousTransformer(nn.Module):
 
     def forward(
         self,
-        x,
-        mask=None,
-        prepend_embeds=None,
-        prepend_mask=None,
-        global_cond=None,
+        x: torch.Tensor,
+        mask: tp.Optional[torch.Tensor] = None,
+        prepend_embeds: tp.Optional[torch.Tensor] = None,
+        prepend_mask: tp.Optional[torch.Tensor] = None,
+        global_cond: tp.Optional[torch.Tensor] = None,
+        return_info: bool = False,
         **kwargs
     ):
         batch, seq, device = *x.shape[:2], x.device
 
+        info = {"hidden_states": []}
+
         x = self.project_in(x)
 
-        if prepend_embeds is not None:
+        if exists(prepend_embeds):
             prepend_length, prepend_dim = prepend_embeds.shape[1:]
 
             assert prepend_dim == x.shape[-1], 'prepend dimension must match sequence dimension'
 
             x = torch.cat((prepend_embeds, x), dim=-2)
 
-            if prepend_mask is not None or mask is not None:
-                mask = mask if mask is not None else torch.ones((batch, seq), device=device, dtype=torch.bool)
-                prepend_mask = prepend_mask if prepend_mask is not None else torch.ones((batch, prepend_length), device=device, dtype=torch.bool)
-
+            if exists(prepend_mask) or exists(mask):
+                mask = mask if exists(mask) else torch.ones((batch, seq), device=device, dtype=torch.bool)
+                prepend_mask = prepend_mask if exists(prepend_mask) else torch.ones((batch, prepend_length), device=device, dtype=torch.bool)
                 mask = torch.cat((prepend_mask, mask), dim=-1)
 
         # Attention layers
 
-        if self.rotary_pos_emb is not None:
-            rotary_pos_emb = self.rotary_pos_emb.forward_from_seq_len(x.shape[1])
-        else:
-            rotary_pos_emb = None
+        rotary_pos_emb = self.rotary_pos_emb.forward_from_seq_len(x.shape[1]) if self.rotary_pos_emb else None
 
-        if self.use_sinusoidal_emb:
+        if self.pos_emb:
             x = x + self.pos_emb(x)
 
         # Iterate over the transformer layers
@@ -808,6 +801,9 @@ class ContinuousTransformer(nn.Module):
             # x = layer(x, rotary_pos_emb = rotary_pos_emb, global_cond=global_cond, **kwargs)
             x = checkpoint(layer, x, rotary_pos_emb=rotary_pos_emb, global_cond=global_cond, **kwargs)
 
+            if return_info:
+                info["hidden_states"].append(x)
+
         x = self.project_out(x)
 
-        return x
+        return (x, info) if return_info else x
