@@ -24,4 +24,4 @@ def float_to_int16_audio(x: torch.Tensor, maximize: bool = False):
     if not maximize:
         div = max(div, 1.0)
 
-    return x.to(torch.float32).div(div).mul(32767).to(torch.int16).cpu()
+    return x.div(div).mul(32767).to(torch.int16).cpu()

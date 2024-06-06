@@ -70,10 +70,22 @@ class AudioLanguageModel(nn.Module):
                 ):
 
         batch, num_quantizers, seq_len = sequence.shape
+        dtype = next(self.parameters()).dtype
 
         assert num_quantizers == self.num_quantizers, "Number of quantizers in sequence must match number of quantizers in model"
 
         backbone_input = sum([self.embeds[i](sequence[:, i]) for i in range(num_quantizers)])  # [batch, seq_len, embed_dim]
+
+        # Casting
+        if cross_attn_cond:
+            cross_attn_cond = cross_attn_cond.to(dtype)
+
+        if prepend_cond:
+            prepend_cond = prepend_cond.to(dtype)
+            if prepend_cond_mask:
+                prepend_cond_mask = prepend_cond_mask.to(dtype)
+
+        backbone_input = backbone_input.to(dtype)
 
         output = self.backbone(
             backbone_input,

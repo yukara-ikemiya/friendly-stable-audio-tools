@@ -99,6 +99,7 @@ class ConditionedDiffusionModelWrapper(nn.Module):
             io_channels,
             sample_rate,
             min_input_length: int,
+            diffusion_objective: tp.Literal["v", "rectified_flow"] = "v",
             pretransform: tp.Optional[Pretransform] = None,
             cross_attn_cond_ids: tp.List[str] = [],
             global_cond_ids: tp.List[str] = [],
@@ -111,6 +112,7 @@ class ConditionedDiffusionModelWrapper(nn.Module):
         self.conditioner = conditioner
         self.io_channels = io_channels
         self.sample_rate = sample_rate
+        self.diffusion_objective = diffusion_objective
         self.pretransform = pretransform
         self.cross_attn_cond_ids = cross_attn_cond_ids
         self.global_cond_ids = global_cond_ids
@@ -118,7 +120,7 @@ class ConditionedDiffusionModelWrapper(nn.Module):
         self.prepend_cond_ids = prepend_cond_ids
         self.min_input_length = min_input_length
 
-    def get_conditioning_inputs(self, cond: tp.Dict[str, tp.Any], negative=False):
+    def get_conditioning_inputs(self, conditioning_tensors: tp.Dict[str, tp.Any], negative=False):
         cross_attention_input = None
         cross_attention_masks = None
         global_cond = None
@@ -133,7 +135,7 @@ class ConditionedDiffusionModelWrapper(nn.Module):
             cross_attention_masks = []
 
             for key in self.cross_attn_cond_ids:
-                cross_attn_in, cross_attn_mask = cond[key]
+                cross_attn_in, cross_attn_mask = conditioning_tensors[key]
 
                 # Add sequence dimension if it's not there
                 if len(cross_attn_in.shape) == 2:
@@ -149,20 +151,35 @@ class ConditionedDiffusionModelWrapper(nn.Module):
         if len(self.global_cond_ids) > 0:
             # Concatenate all global conditioning inputs over the channel dimension
             # Assumes that the global conditioning inputs are of shape (batch, channels)
-            global_cond = torch.cat([cond[key][0] for key in self.global_cond_ids], dim=-1)
+            global_conds = []
+            for key in self.global_cond_ids:
+                global_cond_input = conditioning_tensors[key][0]
+                global_conds.append(global_cond_input)
+
+            # Concatenate over the channel dimension
+            global_cond = torch.cat(global_conds, dim=-1)
+
             if len(global_cond.shape) == 3:
                 global_cond = global_cond.squeeze(1)
 
         if len(self.input_concat_ids) > 0:
             # Concatenate all input concat conditioning inputs over the channel dimension
             # Assumes that the input concat conditioning inputs are of shape (batch, channels, seq)
-            input_concat_cond = torch.cat([cond[key][0] for key in self.input_concat_ids], dim=1)
+            input_concat_cond = torch.cat([conditioning_tensors[key][0] for key in self.input_concat_ids], dim=1)
 
         if len(self.prepend_cond_ids) > 0:
             # Concatenate all prepend conditioning inputs over the sequence dimension
             # Assumes that the prepend conditioning inputs are of shape (batch, seq, channels)
-            prepend_cond = torch.cat([cond[key][0] for key in self.prepend_cond_ids], dim=1)
-            prepend_cond_mask = torch.cat([cond[key][1] for key in self.prepend_cond_ids], dim=1)
+            prepend_conds = []
+            prepend_cond_masks = []
+
+            for key in self.prepend_cond_ids:
+                prepend_cond_input, prepend_cond_mask = conditioning_tensors[key]
+                prepend_conds.append(prepend_cond_input)
+                prepend_cond_masks.append(prepend_cond_mask)
+
+            prepend_cond = torch.cat(prepend_conds, dim=1)
+            prepend_cond_mask = torch.cat(prepend_cond_masks, dim=1)
 
         if negative:
             return {
@@ -489,7 +506,6 @@ class DiTWrapper(ConditionedDiffusionModel):
         **kwargs
     ):
         assert batch_cfg, "batch_cfg must be True for DiTWrapper"
-        assert negative_input_concat_cond is None, "negative_input_concat_cond is not supported for DiTWrapper"
 
         return self.model(
             x,
@@ -581,6 +597,7 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
 
     io_channels = model_config['io_channels']
     sample_rate = config['sample_rate']
+    diffusion_objective = diffusion_config.get('diffusion_objective', 'v')
     conditioning_config = model_config.get('conditioning', None)
 
     conditioner = None
@@ -607,17 +624,17 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
 
     # Get the proper wrapper class
 
+    extra_kwargs = {}
+
     if model_type == "diffusion_cond" or model_type == "diffusion_cond_inpaint":
         wrapper_fn = ConditionedDiffusionModelWrapper
+        extra_kwargs["diffusion_objective"] = diffusion_objective
     elif model_type == "diffusion_prior":
         prior_type = model_config["prior_type"]
 
         if prior_type == "mono_stereo":
             from .diffusion_prior import MonoToStereoDiffusionPrior
             wrapper_fn = MonoToStereoDiffusionPrior
-        elif prior_type == "source_separation":
-            from .diffusion_prior import SourceSeparationDiffusionPrior
-            wrapper_fn = SourceSeparationDiffusionPrior
 
     return wrapper_fn(
         diffusion_model,
@@ -629,5 +646,6 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
         input_concat_ids=input_concat_ids,
         prepend_cond_ids=prepend_cond_ids,
         pretransform=pretransform,
-        io_channels=io_channels
+        io_channels=io_channels,
+        **extra_kwargs
     )

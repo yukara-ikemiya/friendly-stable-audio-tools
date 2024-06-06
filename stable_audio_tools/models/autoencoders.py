@@ -51,12 +51,10 @@ class ResidualUnit(nn.Module):
         self.dilation = dilation
         padding = (dilation * (7 - 1)) // 2
 
-        act = get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=out_channels)
-
         self.layers = nn.Sequential(
-            act,
+            get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=out_channels),
             WNConv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=7, dilation=dilation, padding=padding),
-            act,
+            get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=out_channels),
             WNConv1d(in_channels=out_channels, out_channels=out_channels, kernel_size=1)
         )
 
@@ -74,13 +72,11 @@ class EncoderBlock(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, stride, use_snake: bool = False, antialias_activation: bool = False):
         super().__init__()
 
-        act = get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=in_channels)
-
         self.layers = nn.Sequential(
             ResidualUnit(in_channels=in_channels, out_channels=in_channels, dilation=1, use_snake=use_snake),
             ResidualUnit(in_channels=in_channels, out_channels=in_channels, dilation=3, use_snake=use_snake),
             ResidualUnit(in_channels=in_channels, out_channels=in_channels, dilation=9, use_snake=use_snake),
-            act,
+            get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=in_channels),
             WNConv1d(in_channels=in_channels, out_channels=out_channels,
                      kernel_size=2 * stride, stride=stride, padding=math.ceil(stride / 2)),
         )
@@ -108,10 +104,8 @@ class DecoderBlock(nn.Module):
                 out_channels=out_channels,
                 kernel_size=2 * stride, stride=stride, padding=math.ceil(stride / 2))
 
-        act = get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=in_channels)
-
         self.layers = nn.Sequential(
-            act,
+            get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=in_channels),
             upsample_layer,
             ResidualUnit(in_channels=out_channels, out_channels=out_channels, dilation=1, use_snake=use_snake),
             ResidualUnit(in_channels=out_channels, out_channels=out_channels, dilation=3, use_snake=use_snake),

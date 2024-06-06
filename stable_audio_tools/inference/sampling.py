@@ -26,6 +26,41 @@ def t_to_alpha_sigma(t):
 
 
 @torch.no_grad()
+def sample_discrete_euler(model, x, steps, sigma_max=1, verbose: bool = True, **extra_args):
+    """Draws samples from a model given starting noise. Euler method"""
+
+    if verbose:
+        itv = 10
+        t_s = torch.cuda.Event(enable_timing=True)
+        t_e = torch.cuda.Event(enable_timing=True)
+        t_s.record()
+
+    # Create the noise schedule
+    t = torch.linspace(sigma_max, 0, steps + 1)
+
+    # alphas, sigmas = 1-t, t
+    for idx, (t_curr, t_prev) in enumerate(zip(t[:-1], t[1:])):
+        # Broadcast the current timestep to the correct shape
+        t_curr_tensor = t_curr * torch.ones(
+            (x.shape[0],), dtype=x.dtype, device=x.device
+        )
+
+        # we solve backwards in our formulation
+        dt = t_prev - t_curr
+        x = x + dt * model(x, t_curr_tensor, **extra_args)  # .denoise(x, denoiser, t_curr_tensor, cond, uc)
+
+        if verbose and (idx + 1) % itv == 0:
+            t_e.record()
+            torch.cuda.synchronize()
+            proc_time = t_s.elapsed_time(t_e) / 1000.
+            print_once(f"{idx + 1}\t / {steps}  [{itv / proc_time:.2f} iter/sec]")
+            t_s.record()
+
+    # If we are on the last timestep, output the denoised image
+    return x
+
+
+@torch.no_grad()
 def sample(model, x, steps, eta, verbose: bool = True, **extra_args):
     """Draws samples from a model given starting noise. v-diffusion"""
     ts = x.new_ones([x.shape[0]])
@@ -191,3 +226,43 @@ def sample_k(
             return K.sampling.sample_dpmpp_2m_sde(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "dpmpp-3m-sde":
             return K.sampling.sample_dpmpp_3m_sde(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
+
+
+# Uses discrete Euler sampling for rectified flow models
+# init_data is init_audio as latents (if this is latent diffusion)
+# For sampling, set both init_data and mask to None
+# For variations, set init_data
+# For inpainting, set both init_data & mask
+def sample_rf(
+    model_fn,
+    noise,
+    init_data=None,
+    steps=100,
+    sigma_max=1,
+    device="cuda",
+    callback=None,
+    cond_fn=None,
+    **extra_args
+):
+    if sigma_max > 1:
+        sigma_max = 1
+
+    # NOTE: need to check this is correct
+    denoiser = K.external.VDenoiser(model_fn)
+
+    if cond_fn is not None:
+        denoiser = make_cond_model_fn(denoiser, cond_fn)
+
+    if init_data is not None:
+        # VARIATION (no inpainting)
+        # Interpolate the init data and the noise for init audio
+        x = init_data * (1 - sigma_max) + noise * sigma_max
+    else:
+        # SAMPLING
+        # set the initial latent to noise
+        x = noise
+
+    with torch.cuda.amp.autocast():
+        # TODO: Add callback support
+        # return sample_discrete_euler(model_fn, x, steps, sigma_max, callback=wrapped_callback, **extra_args)
+        return sample_discrete_euler(model_fn, x, steps, sigma_max, **extra_args)

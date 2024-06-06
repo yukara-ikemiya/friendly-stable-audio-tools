@@ -5,6 +5,10 @@ import numpy as np
 import torch
 
 
+def exists(x: torch.Tensor):
+    return x is not None
+
+
 def get_world_size():
     if not torch.distributed.is_available() or not torch.distributed.is_initialized():
         return 1

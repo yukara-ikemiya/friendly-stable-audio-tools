@@ -1,9 +1,9 @@
 import json
 
+from huggingface_hub import hf_hub_download
+
 from .factory import create_model_from_config
 from .utils import load_ckpt_state_dict
-
-from huggingface_hub import hf_hub_download
 
 
 def get_pretrained_model(name: str):

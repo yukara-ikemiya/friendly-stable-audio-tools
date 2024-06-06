@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='friendly-stable-audio-tools',
-    version='0.0.15',
+    version='0.0.16',
     url='https://github.com/yukara-ikemiya/friendly-stable-audio-tools.git',
     author='Yukara Ikemiya and Stability AI',
     description='Training and inference tools for generative audio models from Stability AI',
