@@ -1,6 +1,6 @@
 # 🐈 friendly-stable-audio-tools
 
-![Stable Audio 2.0](assets/fig/stable_audio_2.png)
+![Stable Audio 2.0](assets/fig/stable_audio_2_0.png)
 
 This repository is a refactored / updated version of `stable-audio-tools` 
 which is an open-source code for **audio/music generative models**

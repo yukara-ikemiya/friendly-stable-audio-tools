@@ -632,7 +632,6 @@ class AudioAutoencoder(nn.Module):
                 if i != n_chunk - 1:
                     x_[:, :, -overlap_s:] *= win[None, None, -overlap_s:]
 
-                # print(audio_rec.shape, head, chunk_size, x_.shape)
                 head = i * hopsize
                 audio_rec[:, :, head: head + chunk_size] += x_
 

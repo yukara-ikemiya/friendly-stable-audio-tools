@@ -120,7 +120,11 @@ class ConditionedDiffusionModelWrapper(nn.Module):
         self.prepend_cond_ids = prepend_cond_ids
         self.min_input_length = min_input_length
 
-    def get_conditioning_inputs(self, conditioning_tensors: tp.Dict[str, tp.Any], negative=False):
+    def get_conditioning_inputs(
+        self,
+        conditioning_tensors: tp.Dict[str, tp.Any],
+        negative=False
+    ):
         cross_attention_input = None
         cross_attention_masks = None
         global_cond = None
@@ -604,7 +608,7 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
     if conditioning_config:
         conditioner = create_multi_conditioner_from_conditioning_config(conditioning_config)
 
-    cross_attention_ids = diffusion_config.get('cross_attention_cond_ids', [])
+    cross_attn_cond_ids = diffusion_config.get('cross_attention_cond_ids', [])
     global_cond_ids = diffusion_config.get('global_cond_ids', [])
     input_concat_ids = diffusion_config.get('input_concat_ids', [])
     prepend_cond_ids = diffusion_config.get('prepend_cond_ids', [])
@@ -641,7 +645,7 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
         conditioner,
         min_input_length=min_input_length,
         sample_rate=sample_rate,
-        cross_attn_cond_ids=cross_attention_ids,
+        cross_attn_cond_ids=cross_attn_cond_ids,
         global_cond_ids=global_cond_ids,
         input_concat_ids=input_concat_ids,
         prepend_cond_ids=prepend_cond_ids,

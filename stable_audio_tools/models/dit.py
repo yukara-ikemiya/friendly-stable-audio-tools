@@ -237,7 +237,6 @@ class DiffusionTransformer(nn.Module):
         negative_cross_attn_mask=None,
         input_concat_cond=None,
         global_embed=None,
-        negative_global_embed=None,
         prepend_cond=None,
         prepend_cond_mask=None,
         cfg_scale=1.0,
@@ -258,7 +257,7 @@ class DiffusionTransformer(nn.Module):
             prepend_cond_mask = prepend_cond_mask.bool()
 
         # CFG dropout
-        if cfg_dropout_prob > 0.0:
+        if self.training and cfg_dropout_prob > 0.0:
             if exists(cross_attn_cond):
                 null_embed = torch.zeros_like(cross_attn_cond, device=cross_attn_cond.device)
                 dropout_mask = torch.bernoulli(torch.full(

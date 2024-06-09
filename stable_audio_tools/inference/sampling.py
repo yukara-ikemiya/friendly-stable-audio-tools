@@ -4,7 +4,7 @@ import math
 import torch
 import k_diffusion as K
 
-from stable_audio_tools.utils.torch_common import print_once
+from stable_audio_tools.utils.torch_common import print_once, exists
 
 
 def get_alphas_sigmas(t):
@@ -153,12 +153,12 @@ def sample_k(
     rho=1.0, device="cuda",
     callback=None,
     cond_fn=None,
+    disable_tqdm: bool = False,
     **extra_args
 ):
-
     denoiser = K.external.VDenoiser(model_fn)
 
-    if cond_fn is not None:
+    if exists(cond_fn):
         denoiser = make_cond_model_fn(denoiser, cond_fn)
 
     # Make the list of sigmas. Sigma values are scalars related to the amount of noise each denoising step has
@@ -168,11 +168,11 @@ def sample_k(
 
     wrapped_callback = callback
 
-    if mask is None and init_data is not None:
+    if mask is None and exists(init_data):
         # VARIATION (no inpainting)
         # set the initial latent to the init_data, and noise it with initial sigma
         x = init_data + noise
-    elif mask is not None and init_data is not None:
+    elif exists(mask) and exists(init_data):
         # INPAINTING
         bmask = get_bmask(0, steps, mask)
         # initial noising
@@ -209,23 +209,23 @@ def sample_k(
 
     with torch.cuda.amp.autocast():
         if sampler_type == "k-heun":
-            return K.sampling.sample_heun(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
+            return K.sampling.sample_heun(denoiser, x, sigmas, disable=disable_tqdm, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "k-lms":
-            return K.sampling.sample_lms(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
+            return K.sampling.sample_lms(denoiser, x, sigmas, disable=disable_tqdm, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "k-dpmpp-2s-ancestral":
-            return K.sampling.sample_dpmpp_2s_ancestral(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
+            return K.sampling.sample_dpmpp_2s_ancestral(denoiser, x, sigmas, disable=disable_tqdm, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "k-dpm-2":
-            return K.sampling.sample_dpm_2(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
+            return K.sampling.sample_dpm_2(denoiser, x, sigmas, disable=disable_tqdm, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "k-dpm-fast":
             return K.sampling.sample_dpm_fast(
-                denoiser, x, sigma_min, sigma_max, steps, disable=False, callback=wrapped_callback, extra_args=extra_args)
+                denoiser, x, sigma_min, sigma_max, steps, disable=disable_tqdm, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "k-dpm-adaptive":
             return K.sampling.sample_dpm_adaptive(
-                denoiser, x, sigma_min, sigma_max, rtol=0.01, atol=0.01, disable=False, callback=wrapped_callback, extra_args=extra_args)
+                denoiser, x, sigma_min, sigma_max, rtol=0.01, atol=0.01, disable=disable_tqdm, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "dpmpp-2m-sde":
-            return K.sampling.sample_dpmpp_2m_sde(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
+            return K.sampling.sample_dpmpp_2m_sde(denoiser, x, sigmas, disable=disable_tqdm, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "dpmpp-3m-sde":
-            return K.sampling.sample_dpmpp_3m_sde(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
+            return K.sampling.sample_dpmpp_3m_sde(denoiser, x, sigmas, disable=disable_tqdm, callback=wrapped_callback, extra_args=extra_args)
 
 
 # Uses discrete Euler sampling for rectified flow models
@@ -242,6 +242,7 @@ def sample_rf(
     device="cuda",
     callback=None,
     cond_fn=None,
+    disable_tqdm: bool = False,
     **extra_args
 ):
     if sigma_max > 1:
@@ -265,4 +266,4 @@ def sample_rf(
     with torch.cuda.amp.autocast():
         # TODO: Add callback support
         # return sample_discrete_euler(model_fn, x, steps, sigma_max, callback=wrapped_callback, **extra_args)
-        return sample_discrete_euler(model_fn, x, steps, sigma_max, **extra_args)
+        return sample_discrete_euler(model_fn, x, steps, sigma_max, verbose=not disable_tqdm, **extra_args)
