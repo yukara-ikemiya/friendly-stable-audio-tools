@@ -36,3 +36,7 @@ sfx: # sound effects
     prompt: A man speaks and then an audience claps
     seconds_start: 0
     seconds_total: 10
+  sample-4:
+    prompt: Baby laughing
+    seconds_start: 0
+    seconds_total: 10

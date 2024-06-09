@@ -1,6 +1,7 @@
 import gc
 import gradio as gr
 import json
+from pathlib import Path
 
 import torch
 import torchaudio
@@ -11,12 +12,14 @@ from ..inference.generation import generate_diffusion_cond, generate_diffusion_u
 from ..models.factory import create_model_from_config
 from ..models.pretrained import get_pretrained_model
 from ..models.utils import load_ckpt_state_dict
-from ..utils.torch_common import copy_state_dict
+from ..utils.torch_common import copy_state_dict, exists
+from ..utils.audio_utils import float_to_int16_audio
 from ..training.viz import audio_spectrogram_image
 
 model = None
 sample_rate = 32000
 sample_size = 1920000
+output_dir = ''
 
 
 def load_model(model_config=None, model_ckpt_path=None, pretrained_name=None, pretransform_ckpt_path=None, device="cuda", model_half=False):
@@ -84,7 +87,13 @@ def generate_cond(
         torch.cuda.empty_cache()
     gc.collect()
 
-    print(f"Prompt: {prompt}")
+    print("=== Conditional generation ===")
+    print(f"\tPrompt: {prompt}")
+    print(f"\tStart (sec): {seconds_start}")
+    print(f"\tLength (sec): {seconds_total}")
+    print(f"\tCFG scale: {cfg_scale}")
+    print(f"\tSteps: {steps}")
+    print(f"\tSeed: {seed}")
 
     global preview_images
     preview_images = []
@@ -168,9 +177,7 @@ def generate_cond(
         negative_conditioning=negative_conditioning,
         steps=steps,
         cfg_scale=cfg_scale,
-        batch_size=batch_size,
         sample_size=input_sample_size,
-        sample_rate=sample_rate,
         seed=seed,
         device=device,
         sampler_type=sampler_type,
@@ -184,14 +191,20 @@ def generate_cond(
     )
 
     # Convert to WAV file
-    audio = rearrange(audio, "b d n -> d (b n)")
-    audio = audio.to(torch.float32).div(torch.max(torch.abs(audio))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-    torchaudio.save("output.wav", audio, sample_rate)
+    # audio = rearrange(audio, "b d n -> d (b n)")
+    audio = audio.squeeze(0)
+    audio = float_to_int16_audio(audio)
+    # clip audio length
+    length = int(sample_rate * seconds_total)
+    audio = audio[:, :length]
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    torchaudio.save(f"{output_dir}/output.wav", audio, sample_rate)
 
     # Let's look at a nice spectrogram too
     audio_spectrogram = audio_spectrogram_image(audio, sample_rate=sample_rate)
 
-    return ("output.wav", [audio_spectrogram, *preview_images])
+    return (f"{output_dir}/output.wav", [audio_spectrogram, *preview_images])
 
 
 def generate_uncond(
@@ -285,11 +298,12 @@ def generate_uncond(
 
     audio = audio.to(torch.float32).div(torch.max(torch.abs(audio))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
 
-    torchaudio.save("output.wav", audio, sample_rate)
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    torchaudio.save(f"{output_dir}/output.wav", audio, sample_rate)
 
     audio_spectrogram = audio_spectrogram_image(audio, sample_rate=sample_rate)
 
-    return ("output.wav", [audio_spectrogram, *preview_images])
+    return (f"{output_dir}/output.wav", [audio_spectrogram, *preview_images])
 
 
 def generate_lm(
@@ -317,11 +331,12 @@ def generate_lm(
 
     audio = audio.to(torch.float32).div(torch.max(torch.abs(audio))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
 
-    torchaudio.save("output.wav", audio, sample_rate)
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    torchaudio.save(f"{output_dir}/output.wav", audio, sample_rate)
 
     audio_spectrogram = audio_spectrogram_image(audio, sample_rate=sample_rate)
 
-    return ("output.wav", [audio_spectrogram])
+    return (f"{output_dir}/output.wav", [audio_spectrogram])
 
 
 def create_uncond_sampling_ui(model_config):
@@ -387,6 +402,8 @@ def create_sampling_ui(model_config, inpainting=False):
 
     has_seconds_start = False
     has_seconds_total = False
+    seconds_total = 0.
+    seconds_itv = 0.5
 
     if model_conditioning_config is not None:
         for conditioning_config in model_conditioning_config["configs"]:
@@ -394,14 +411,17 @@ def create_sampling_ui(model_config, inpainting=False):
                 has_seconds_start = True
             if conditioning_config["id"] == "seconds_total":
                 has_seconds_total = True
+                seconds_total = model_config['sample_size'] / model_config['sample_rate']
+                seconds_total = int(seconds_total / seconds_itv) * seconds_itv
 
     with gr.Row(equal_height=False):
         with gr.Column():
             with gr.Row(visible=has_seconds_start or has_seconds_total):
                 # Timing controls
-                seconds_start_slider = gr.Slider(minimum=0, maximum=512, step=1, value=0, label="Seconds start", visible=has_seconds_start)
-                seconds_total_slider = gr.Slider(minimum=0, maximum=512, step=1, value=sample_size //
-                                                 sample_rate, label="Seconds total", visible=has_seconds_total)
+                seconds_start_slider = gr.Slider(
+                    minimum=0, maximum=seconds_total, step=seconds_itv, value=0, label="Seconds start", visible=has_seconds_start)
+                seconds_total_slider = gr.Slider(
+                    minimum=0, maximum=seconds_total, step=seconds_itv, value=seconds_total, label="Seconds total", visible=has_seconds_total)
 
             with gr.Row():
                 # Steps slider
@@ -420,8 +440,9 @@ def create_sampling_ui(model_config, inpainting=False):
 
                 # Sampler params
                 with gr.Row():
-                    sampler_type_dropdown = gr.Dropdown(["dpmpp-2m-sde", "dpmpp-3m-sde", "k-heun", "k-lms",
-                                                        "k-dpmpp-2s-ancestral", "k-dpm-2", "k-dpm-fast"], label="Sampler type", value="dpmpp-3m-sde")
+                    sampler_type_dropdown = gr.Dropdown(
+                        ["dpmpp-2m-sde", "dpmpp-3m-sde", "k-heun", "k-lms", "k-dpmpp-2s-ancestral", "k-dpm-2", "k-dpm-fast"],
+                        label="Sampler type", value="dpmpp-3m-sde")
                     sigma_min_slider = gr.Slider(minimum=0.0, maximum=2.0, step=0.01, value=0.03, label="Sigma min")
                     sigma_max_slider = gr.Slider(minimum=0.0, maximum=1000.0, step=0.1, value=500, label="Sigma max")
                     cfg_rescale_slider = gr.Slider(minimum=0.0, maximum=1, step=0.01, value=0.0, label="CFG rescale amount")
@@ -479,22 +500,23 @@ def create_sampling_ui(model_config, inpainting=False):
                     init_audio_input = gr.Audio(label="Init audio")
                     init_noise_level_slider = gr.Slider(minimum=0.1, maximum=100.0, step=0.01, value=0.1, label="Init noise level")
 
-                    inputs = [prompt,
-                              negative_prompt,
-                              seconds_start_slider,
-                              seconds_total_slider,
-                              cfg_scale_slider,
-                              steps_slider,
-                              preview_every_slider,
-                              seed_textbox,
-                              sampler_type_dropdown,
-                              sigma_min_slider,
-                              sigma_max_slider,
-                              cfg_rescale_slider,
-                              init_audio_checkbox,
-                              init_audio_input,
-                              init_noise_level_slider
-                              ]
+                    inputs = [
+                        prompt,
+                        negative_prompt,
+                        seconds_start_slider,
+                        seconds_total_slider,
+                        cfg_scale_slider,
+                        steps_slider,
+                        preview_every_slider,
+                        seed_textbox,
+                        sampler_type_dropdown,
+                        sigma_min_slider,
+                        sigma_max_slider,
+                        cfg_rescale_slider,
+                        init_audio_checkbox,
+                        init_audio_input,
+                        init_noise_level_slider
+                    ]
 
         with gr.Column():
             audio_output = gr.Audio(label="Output audio", interactive=False)
@@ -519,6 +541,7 @@ def create_txt2audio_ui(model_config):
             create_sampling_ui(model_config)
         with gr.Tab("Inpainting"):
             create_sampling_ui(model_config, inpainting=True)
+
     return ui
 
 
@@ -568,9 +591,10 @@ def autoencoder_process(audio, latent_noise, n_quantizers):
     audio = rearrange(audio, "b d n -> d (b n)")
     audio = audio.to(torch.float32).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
 
-    torchaudio.save("output.wav", audio, sample_rate)
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    torchaudio.save(f"{output_dir}/output.wav", audio, sample_rate)
 
-    return "output.wav"
+    return f"{output_dir}/output.wav"
 
 
 def create_autoencoder_ui(model_config):
@@ -621,9 +645,10 @@ def diffusion_prior_process(audio, steps, sampler_type, sigma_min, sigma_max):
 
     audio = audio.to(torch.float32).div(torch.max(torch.abs(audio))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
 
-    torchaudio.save("output.wav", audio, sample_rate)
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    torchaudio.save(f"{output_dir}/output.wav", audio, sample_rate)
 
-    return "output.wav"
+    return f"{output_dir}/output.wav"
 
 
 def create_diffusion_prior_ui(model_config):
@@ -672,12 +697,21 @@ def create_lm_ui(model_config):
     return ui
 
 
-def create_ui(model_config_path=None, ckpt_path=None, pretrained_name=None, pretransform_ckpt_path=None, model_half=False):
+def create_ui(
+    model_config_path=None,
+    ckpt_path=None,
+    pretrained_name=None,
+    pretransform_ckpt_path=None,
+    model_half: bool = False,
+    tmp_dir: str = ''
+):
+    global output_dir
+    output_dir = tmp_dir
 
-    assert pretrained_name ^ (model_config_path and ckpt_path), \
+    assert exists(pretrained_name) ^ (exists(model_config_path) and exists(ckpt_path)), \
         "Must specify either pretrained name or provide a model config and checkpoint, but not both"
 
-    if model_config_path is not None:
+    if exists(model_config_path):
         # Load config from json file
         with open(model_config_path) as f:
             model_config = json.load(f)
