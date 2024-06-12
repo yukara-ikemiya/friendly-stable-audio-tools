@@ -90,7 +90,7 @@
         "io_channels": 64
     },
     "training": {
-        "learning_rate": 4e-5,
+        "learning_rate": 0.0005,
         "logging":{
             "log_every": 20
         },

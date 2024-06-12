@@ -1,6 +1,6 @@
 {
     "model_type": "diffusion_cond",
-    "sample_size": 12582912,
+    "sample_size": 2097152,
     "sample_rate": 44100,
     "audio_channels": 2,
     "model": {
@@ -43,13 +43,10 @@
             "configs": [
                 {
                     "id": "prompt",
-                    "type": "clap_text",
+                    "type": "t5",
                     "config": {
-                        "audio_model_type": "HTSAT-base",
-                        "enable_fusion": true,
-                        "clap_ckpt_path": "ckpt/clap/music_audioset_epoch_15_esc_90.14.pt",
-                        "use_text_features": true,
-                        "feature_layer_ix": -2
+                        "t5_model_name": "t5-base",
+                        "max_length": 128
                     }
                 },
                 {
@@ -90,14 +87,13 @@
     },
     "training": {
         "use_ema": true,
-        "cfg_dropout_prob": 0.1,
         "log_loss_info": false,
         "optimizer_configs": {
             "diffusion": {
                 "optimizer": {
                     "type": "AdamW",
                     "config": {
-                        "lr": 5e-5,
+                        "lr": 5e-05,
                         "betas": [0.9, 0.999],
                         "weight_decay": 0.001
                     }
@@ -124,12 +120,13 @@
         "demo": {
             "demo_every": 2000,
             "demo_steps": 250,
-            "num_demos": 3,
-            "log_duration": 60.0,
+            "num_demos": 4,
+            "log_duration": 30.0,
             "demo_cond": [
-                {"prompt": "This is a dummy prompt", "seconds_start": 0, "seconds_total": 80},
-                {"prompt": "A cool 80s glam rock song with driving drums and distorted guitars", "seconds_start": 0, "seconds_total": 180},
-                {"prompt": "A grand orchestral arrangement with thunderous percussion, epic brass fanfares, and soaring strings, creating a cinematic atmosphere fit for a heroic battle.", "seconds_start": 0, "seconds_total": 190}
+                {"prompt": "Amen break 174 BPM", "seconds_start": 0, "seconds_total": 12},
+                {"prompt": "A beautiful orchestral symphony, classical music", "seconds_start": 0, "seconds_total": 160},
+                {"prompt": "Chill hip-hop beat, chillhop", "seconds_start": 0, "seconds_total": 190},
+                {"prompt": "A pop song about love and loss", "seconds_start": 0, "seconds_total": 180}
             ],
             "demo_cfg_scales": [3, 9]
         },

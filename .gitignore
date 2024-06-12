@@ -162,6 +162,7 @@ cython_debug/
 # Logs
 wandb/
 runs/
+tmp/
 
 # Checkpoints
 *.pt

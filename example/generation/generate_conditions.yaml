@@ -1,0 +1,42 @@
+music:
+  drum:
+    sample-1:
+      prompt: 128 BPM tech house drum loop
+      seconds_start: 0
+      seconds_total: 30
+    sample-2:
+      prompt: 140 BPM heavy metal drum solo
+      seconds_start: 0
+      seconds_total: 20
+  
+  mix:
+    sample-1:
+      prompt: A grand orchestral arrangement with thunderous percussion, epic brass fanfares, and soaring strings, creating a cinematic atmosphere fit for a heroic battle
+      seconds_start: 0
+      seconds_total: 45
+    sample-2:
+      prompt: 80s electronic track with melodic synthesizers, catchy beat and groovy bass
+      seconds_start: 0
+      seconds_total: 45
+    sample-3:
+      prompt: Smooth jazz, with a saxophone solo, piano chords, and snare full drums
+      seconds_start: 0
+      seconds_total: 45
+
+sfx: # sound effects
+  sample-1:
+    prompt: Thunder claps, and hard rain falls and splashes on surfaces
+    seconds_start: 0
+    seconds_total: 10
+  sample-2:
+    prompt: Birds chirping and water dripping with some banging in the background
+    seconds_start: 0
+    seconds_total: 10
+  sample-3:
+    prompt: A man speaks and then an audience claps
+    seconds_start: 0
+    seconds_total: 10
+  sample-4:
+    prompt: Baby laughing
+    seconds_start: 0
+    seconds_total: 10

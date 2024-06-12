@@ -2,6 +2,10 @@
 
 Version numbers are based on the original `stable-audio-tools` repo.
 
+### ver.0.0.16.1
+- Add convenient scripts for inference with Stable Audio Open.
+- Fix Gradio scripts.
+
 ### ver.0.0.16
 - The 0.0.16 update from the original repo is applied.
 - A bug of ResidualUnit of autoencoder was fixed (shared activation function).
