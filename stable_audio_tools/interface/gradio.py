@@ -26,17 +26,17 @@ def load_model(model_config=None, model_ckpt_path=None, pretrained_name=None, pr
     global model, sample_rate, sample_size
 
     if pretrained_name is not None:
-        print(f"Loading pretrained model {pretrained_name}")
+        print(f"->->-> Loading pretrained model {pretrained_name}")
         model, model_config = get_pretrained_model(pretrained_name)
-
     elif model_config is not None and model_ckpt_path is not None:
-        print("Creating model from config")
+        print("->->-> Creating model from config")
         model = create_model_from_config(model_config)
-
-        print(f"Loading model checkpoint from {model_ckpt_path}")
+        print(f"->->-> Loading model checkpoint from {model_ckpt_path}")
         # Load checkpoint
         copy_state_dict(model, load_ckpt_state_dict(model_ckpt_path))
         # model.load_state_dict(load_ckpt_state_dict(model_ckpt_path))
+    else:
+        raise RuntimeError("One of 'pretrained_name' or 'model_config/model_ckpt_path' must be specified.")
 
     sample_rate = model_config["sample_rate"]
     sample_size = model_config["sample_size"]

@@ -107,6 +107,13 @@ def main():
         print("=== Model parameters ===")
         print(f'\tDiffusion :\t\t{params_model / (10**6):.3f} [million]')
         print(f'\tConditioner :\t{params_cond / (10**6):.3f} [million]')
+        print("=== Sampling parameters ===")
+        print(f"\tSampler type:\t{sampler_type}")
+        print(f"\tSample steps:\t{sample_steps}")
+        print(f"\tCFG scale:\t\t{cfg_scale}")
+        print("=== Output ===")
+        print(f"\tTotal prompts:\t{len(conds.keys())}")
+        print(f"\tItems per prompt:\t{n_sample_per_cond}")
         print('')
 
     path_rank = path_full[rank:: world_size]

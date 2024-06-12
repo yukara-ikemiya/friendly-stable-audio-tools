@@ -12,9 +12,19 @@ This repository contains the following additional features:
 - 🔥 Refactored codes of `stable-audio-tools` for improved readability and usability.
 - 🔥 Useful scripts for evaluating and playing with your own trained models.
 - 🔥 Instruction on how to train models such as `Stable Audio 2.0`.
+- 🔥 Detailed documentation and convenient scripts for playing with `Stable Audio Open 1.0`.
 
-and does NOT contain:
-- Any pretrained checkpoints
+# 🔥 Stable Audio Open
+
+Stability AI has now open-sourced the pre-trained model for Stable Audio.
+
+- Official release : [Introducing Stable Audio Open](https://stability.ai/news/introducing-stable-audio-open)
+
+For detailed instructions on how to use Stable Audio Open, please refer to this document if you are interested.
+
+- 🔥 [**Documentation for Stable Audio Open 1.0**](./docs/Stable_Audio_Open.md)
+- 🔥 You can now perform multi-GPU/node generation using prompt inputs provided via a YAML file. 
+Please see an example here -> [generate_conditions.yaml](./example/generation/generate_conditions.yaml).
 
 # Requirements
 
@@ -57,6 +67,35 @@ $ singularity build friendly-stable-audio-tools.sif docker-daemon://friendly-sta
 
 By running the above script, `friendly-stable-audio-tools.sif` should be created in the working directory.
 
+# Interface
+
+A basic Gradio interface is provided to test out trained models. 
+
+For example, to create an interface for the [`stable-audio-open-1.0`](https://huggingface.co/stabilityai/stable-audio-open-1.0) model, once you've accepted the terms for the model on Hugging Face, you can run:
+```bash
+$ python3 ./run_gradio.py --pretrained-name stabilityai/stable-audio-open-1.0
+```
+
+If you need more detailed instruction on `Stable Audio Open`, I recommend referring to the [Gradio interface](./docs/Stable_Audio_Open.md#2-gradio-interface) part of the `Stable Audio Open` documentation.
+
+The `run_gradio.py` script accepts the following command line arguments:
+
+- `--pretrained-name` PRETRAINED_NAME (optional)
+  - The model name on Hugging Face Hug (e.g. `stabilityai/stable-audio-open-1.0`)
+  - Will prioritize `model.safetensors` over `model.ckpt` in the repo
+  - When this is specified, `model-config` and `ckpt-path` are ignored.
+- `--model-config` MODEL_CONFIG  (optional)
+  - Path to the model config file for a local model
+- `--ckpt-path` CKPT_PATH  (optional)
+  - Path to unwrapped model checkpoint file for a local model
+- `--pretransform-ckpt-path` PRETRANSFORM_CKPT_PATH (optional)
+  - Path to an unwrapped pretransform checkpoint. This replaces the pretransform in the model.
+- `--username` USERNAME / `--password` PASSWORD  (optional)
+  - Used together to set a login for the Gradio demo
+- `--model-half`  (optional)
+  - Whether to use half precision
+- `--tmp-dir` TMP_DIR  (optional)
+  - Temporary directory for saving output files
 
 # Logging
 
@@ -369,6 +408,7 @@ singularity exec --nv --pwd $ROOT_DIR -B $ROOT_DIR -B $DATASET_DIR \
 
 # Todo
 - [ ] Add convenient scripts for sampling
+- [ ] Add more audio augumentations
 - [ ] Add documentation for Gradio interface
 - [ ] Add troubleshooting section
 - [ ] Add contribution guidelines
