@@ -67,7 +67,7 @@ which allows you to input sets of text prompts and other parameters via a YAML f
 You can specify condition sets, sample names and sub-directories for audio file output as follows.
 - YAML example : [generate_conditions.yaml](../example/generation/generate_conditions.yaml)
 
-= generate_conditions.json =
+= generate_conditions.yaml =
 ```yaml
 music:
   drum:
