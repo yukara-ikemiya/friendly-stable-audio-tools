@@ -406,6 +406,15 @@ singularity exec --nv --pwd $ROOT_DIR -B $ROOT_DIR -B $DATASET_DIR \
     --save-dir ${OUTPUT_DIR}
 ```
 
+## Contribution
+
+Thanks goes to these wonderful contributors:
+
+<a href="https://github.com/yukara-ikemiya/friendly-stable-audio-tools/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=yukara-ikemiya/friendly-stable-audio-tools" />
+</a>
+
+
 # Todo
 - [ ] Add convenient scripts for sampling
 - [ ] Add more audio augumentations
