@@ -215,8 +215,6 @@ class DiffusionTransformer(nn.Module):
                                       mask=mask, prepend_mask=prepend_mask, return_info=return_info, **extra_args, **kwargs)
             if return_info:
                 output, info = output
-        elif self.transformer_type == "mm_transformer":
-            output = self.transformer(x, context=cross_attn_cond, mask=mask, context_mask=cross_attn_cond_mask, **extra_args, **kwargs)
 
         output = rearrange(output, "b t c -> b c t")[:, :, prepend_length:]
 

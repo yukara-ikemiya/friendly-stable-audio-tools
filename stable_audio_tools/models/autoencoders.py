@@ -266,21 +266,28 @@ class AudioAutoencoder(nn.Module):
         self.is_discrete = self.bottleneck and self.bottleneck.is_discrete
 
     def encode(self, audio, return_info=False, skip_pretransform=False, iterate_batch=False, **kwargs):
+        """
+        iterate_batch (int) can be used as max batch size of processing
+        """
         if self.pretransform and not skip_pretransform:
             with nullcontext() if self.pretransform.enable_grad else torch.no_grad():
                 if iterate_batch:
+                    max_bs = int(iterate_batch)
+                    n_iter = int(math.ceil(audio.shape[0] / max_bs))
                     audios = []
-                    for i in range(audio.shape[0]):
-                        audios.append(self.pretransform.encode(audio[i:i + 1]))
+                    for i in range(n_iter):
+                        audios.append(self.pretransform.encode(audio[i * max_bs:(i + 1) * max_bs]))
                     audio = torch.cat(audios, dim=0)
                 else:
                     audio = self.pretransform.encode(audio)
 
         if self.encoder:
             if iterate_batch:
+                max_bs = int(iterate_batch)
+                n_iter = int(math.ceil(audio.shape[0] / max_bs))
                 latents = []
-                for i in range(audio.shape[0]):
-                    latents.append(self.encoder(audio[i:i + 1]))
+                for i in range(n_iter):
+                    latents.append(self.encoder(audio[i * max_bs:(i + 1) * max_bs]))
                 latents = torch.cat(latents, dim=0)
             else:
                 latents = self.encoder(audio)
@@ -299,39 +306,36 @@ class AudioAutoencoder(nn.Module):
     def decode(self, latents, iterate_batch=False, **kwargs):
         if self.bottleneck:
             if iterate_batch:
+                max_bs = int(iterate_batch)
+                n_iter = int(math.ceil(latents.shape[0] / max_bs))
                 decoded = []
-                for i in range(latents.shape[0]):
-                    decoded.append(self.bottleneck.decode(latents[i:i + 1]))
-                decoded = torch.cat(decoded, dim=0)
+                for i in range(n_iter):
+                    decoded.append(self.bottleneck.decode(latents[i * max_bs:(i + 1) * max_bs]))
+                latents = torch.cat(decoded, dim=0)
             else:
                 latents = self.bottleneck.decode(latents)
 
         if iterate_batch:
+            max_bs = int(iterate_batch)
+            n_iter = int(math.ceil(latents.shape[0] / max_bs))
             decoded = []
-            for i in range(latents.shape[0]):
-                decoded.append(self.decoder(latents[i:i + 1]))
+            for i in range(n_iter):
+                decoded.append(self.decoder(latents[i * max_bs:(i + 1) * max_bs]))
             decoded = torch.cat(decoded, dim=0)
         else:
             decoded = self.decoder(latents, **kwargs)
 
         if self.pretransform:
-            if self.pretransform.enable_grad:
+            with torch.no_grad() if not self.pretransform.enable_grad else nullcontext():
                 if iterate_batch:
+                    max_bs = int(iterate_batch)
+                    n_iter = int(math.ceil(decoded.shape[0] / max_bs))
                     decodeds = []
-                    for i in range(decoded.shape[0]):
-                        decodeds.append(self.pretransform.decode(decoded[i:i + 1]))
+                    for i in range(n_iter):
+                        decodeds.append(self.pretransform.decode(decoded[i * max_bs:(i + 1) * max_bs]))
                     decoded = torch.cat(decodeds, dim=0)
                 else:
                     decoded = self.pretransform.decode(decoded)
-            else:
-                with torch.no_grad():
-                    if iterate_batch:
-                        decodeds = []
-                        for i in range(latents.shape[0]):
-                            decodeds.append(self.pretransform.decode(decoded[i:i + 1]))
-                        decoded = torch.cat(decodeds, dim=0)
-                    else:
-                        decoded = self.pretransform.decode(decoded)
 
         if self.soft_clip:
             decoded = torch.tanh(decoded)
@@ -450,7 +454,7 @@ class AudioAutoencoder(nn.Module):
             hopsize = chunk_size - overlap
 
             # zero padding
-            n_chunk = int(math.ceil(sample_length - chunk_size) / hopsize) + 1
+            n_chunk = int(math.ceil((sample_length - chunk_size) / hopsize)) + 1
             pad_len = chunk_size + hopsize * (n_chunk - 1) - sample_length
             audio = F.pad(audio, (0, pad_len))
 
@@ -485,7 +489,7 @@ class AudioAutoencoder(nn.Module):
                     z_[:, :, -overlap_l:] *= win[None, None, -overlap_l:]
 
                 head = i * hopsize_l
-                latents[head: head + chunk_size_l] += z_
+                latents[..., head: head + chunk_size_l] += z_
 
             # fix size
             latents = latents[..., :latent_length]  # (bs, latent_dim, latent_length)
@@ -559,7 +563,7 @@ class AudioAutoencoder(nn.Module):
                     x_[:, :, -overlap_s:] *= win[None, None, -overlap_s:]
 
                 head = i * hopsize_s
-                audios[head: head + chunk_size_s] += x_
+                audios[..., head: head + chunk_size_s] += x_
 
             # fix size
             audios = audios[..., :sample_length]  # (bs, n_ch, sample_length)
@@ -598,7 +602,7 @@ class AudioAutoencoder(nn.Module):
             hopsize = chunk_size - overlap
 
             # zero padding
-            n_chunk = int(math.ceil(sample_length - chunk_size) / hopsize) + 1
+            n_chunk = int(math.ceil((sample_length - chunk_size) / hopsize)) + 1
             pad_len = chunk_size + hopsize * n_chunk - sample_length
             audio = F.pad(audio, (0, pad_len))
 

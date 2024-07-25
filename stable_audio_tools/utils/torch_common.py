@@ -18,10 +18,7 @@ def get_world_size():
 
 def get_rank():
     """Get rank of current process."""
-
-    if "SLURM_PROCID" in os.environ:
-        return int(os.environ["SLURM_PROCID"])
-    elif not torch.distributed.is_available() or not torch.distributed.is_initialized():
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
         return 0
     else:
         return torch.distributed.get_rank()
