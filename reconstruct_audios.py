@@ -20,7 +20,7 @@ from stable_audio_tools.utils.torch_common import get_world_size, get_rank, coun
 from stable_audio_tools.data.dataset import get_audio_filenames
 from stable_audio_tools.data.modification import Mono, Stereo
 
-# import os
+import os
 # import sys
 # sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
@@ -143,8 +143,9 @@ def reconstruct_audio():
 
         # save audio
         rec = rec.squeeze(0).cpu()
-
-        filename = filepath.split('/')[-1]
+        
+        filename = os.path.basename(filepath)
+        
         torchaudio.save(f"{output_dir}/{filename}", rec, sample_rate=sr, format='wav')
         torchaudio.save(f"{output_dir}/../original/{filename}", audio.squeeze(0).cpu(), sample_rate=sr, format='wav')
 
