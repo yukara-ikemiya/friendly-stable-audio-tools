@@ -232,7 +232,7 @@ To use CLAP encoder for conditioning music generation, you have to prepare a pre
 1. Download a pretrained CLAP checkpoint trained with music dataset (`music_audioset_epoch_15_esc_90.14.pt`)
 from the [LAION CLAP repository](https://github.com/LAION-AI/CLAP?tab=readme-ov-file#pretrained-models).
 2. Store the checkpoint file to a directory of your choice.
-3. Edit a `model config` file of Stable Audio 2.0 as follows
+3. Edit a [ `model config` file](https://github.com/yukara-ikemiya/friendly-stable-audio-tools/blob/main/stable_audio_tools/configs/model_configs/txt2audio/stable_audio_2_0.json) of Stable Audio 2.0 as follows
 
 = stable_audio_2_0.json =
 ```json
@@ -323,7 +323,7 @@ you need to unwrap the model checkpoint for using the next stage training.
 
 ```bash
 CKPT_PATH="/path/to/wrapped_ckpt/last.ckpt"
-# NOTE: file extension ".ckpt" will be automatically added to the end of OUTPOUT_DIR name
+# NOTE: file extension ".ckpt" will be automatically added to the end of OUTPUT_DIR name
 OUTPUT_PATH="/path/to/output_name/unwrapped_last"
 
 singularity exec --nv --pwd $ROOT_DIR -B $ROOT_DIR \
